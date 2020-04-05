@@ -103,10 +103,9 @@ init_module (void * data)
 {
   init_position_type ();
 
-  scm_c_define_gsubr (
-    "position-new", 5, 0, 0, make_position);
-  scm_c_define_gsubr (
-    "position-print", 1, 0, 0, print_position);
+#ifndef SCM_MAGIC_SNARFER
+#include "audio_position.x"
+#endif
   scm_c_export (
     "position-new", "position-print", NULL);
 }
