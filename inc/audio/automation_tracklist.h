@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2018-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -38,8 +38,6 @@
                                  &num_selected);
 
 typedef struct AutomationTrack AutomationTrack;
-typedef struct _AutomationTracklistWidget
-  AutomationTracklistWidget;
 typedef struct Track Track;
 typedef struct Automatable Automatable;
 typedef struct AutomationLane AutomationLane;
@@ -83,8 +81,6 @@ typedef struct AutomationTracklist
    * This should be set during initialization.
    */
   int               track_pos;
-
-  AutomationTracklistWidget *  widget;
 } AutomationTracklist;
 
 static const cyaml_schema_field_t
@@ -181,7 +177,8 @@ void
 automation_tracklist_remove_at (
   AutomationTracklist * self,
   AutomationTrack *     at,
-  int                   free);
+  bool                  free,
+  bool                  fire_events);
 
 /**
  * Removes the AutomationTrack's associated with
@@ -210,6 +207,13 @@ AutomationTrack *
 automation_tracklist_get_at_from_port (
   AutomationTracklist * self,
   Port *                port);
+
+/**
+ * Unselects all arranger objects.
+ */
+void
+automation_tracklist_unselect_all (
+  AutomationTracklist * self);
 
 /**
  * Removes all objects recursively.
@@ -256,6 +260,16 @@ automation_tracklist_get_first_invisible_at (
  */
 int
 automation_tracklist_get_num_visible (
+  AutomationTracklist * self);
+
+/**
+ * Verifies the identifiers on a live automation
+ * tracklist (in the project, not a clone).
+ *
+ * @return True if pass.
+ */
+bool
+automation_tracklist_verify_identifiers (
   AutomationTracklist * self);
 
 void

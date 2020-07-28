@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2018-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -27,6 +27,7 @@
 #include "project.h"
 #include "utils/audio.h"
 #include "utils/io.h"
+#include "zrythm_app.h"
 
 /**
  * Creates a ZRegion for audio data.
@@ -106,9 +107,34 @@ audio_region_new (
   position_add_frames (
     &obj->end_pos, clip->num_frames);
 
+  audio_region_init_frame_caches (self, clip);
+
+  /* init */
+  region_init (
+    self, start_pos, &obj->end_pos, track_pos,
+    lane_pos, idx_inside_lane);
+
+  (void) recording;
+  g_warn_if_fail (audio_region_get_clip (self));
+  /*if (!recording)*/
+    /*audio_clip_write_to_pool (clip);*/
+
+  return self;
+}
+
+/**
+ * Allocates the frame caches from the frames in
+ * the clip.
+ */
+void
+audio_region_init_frame_caches (
+  AudioRegion * self,
+  AudioClip *   clip)
+{
   /* copy the clip frames to the cache. */
   self->frames =
-    malloc (
+    realloc (
+      self->frames,
       sizeof (float) *
         (size_t) clip->num_frames * clip->channels);
   self->num_frames = (size_t) clip->num_frames;
@@ -117,15 +143,21 @@ audio_region_new (
     sizeof (float) * (size_t) clip->num_frames *
     clip->channels);
 
-  /* init */
-  region_init (
-    self, start_pos, &obj->end_pos, track_pos,
-    lane_pos, idx_inside_lane);
-
-  if (!recording)
-    audio_clip_write_to_pool (clip);
-
-  return self;
+  /* copy the frames to the channel caches */
+  for (unsigned int i = 0; i < clip->channels; i++)
+    {
+      self->ch_frames[i] =
+        realloc (
+          self->ch_frames[i],
+          sizeof (float) *
+            (size_t) clip->num_frames);
+      for (size_t j = 0;
+           j < (size_t) clip->num_frames; j++)
+        {
+          self->ch_frames[i][j] =
+            self->frames[j * clip->channels + i];
+        }
+    }
 }
 
 /**
@@ -144,7 +176,9 @@ audio_region_get_clip (
   AudioClip * clip =
     AUDIO_POOL->clips[self->pool_id];
 
-  g_return_val_if_fail (clip, NULL);
+  g_return_val_if_fail (
+    clip && clip->frames && clip->num_frames > 0,
+    NULL);
 
   return clip;
 }
@@ -157,4 +191,12 @@ audio_region_get_clip (
 void
 audio_region_free_members (ZRegion * self)
 {
+  free (self->frames);
+  for (int i = 0; i < 16; i++)
+    {
+      if (self->ch_frames[i])
+        {
+          free (self->ch_frames[i]);
+        }
+    }
 }

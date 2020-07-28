@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <math.h>
 
@@ -36,10 +36,13 @@
 #include "gui/widgets/timeline_panel.h"
 #include "gui/widgets/timeline_ruler.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/gtk.h"
 #include "utils/localization.h"
+#include "utils/objects.h"
 #include "utils/string.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -138,7 +141,7 @@ ui_show_message_full (
       parent_window, flags, type,
       GTK_BUTTONS_CLOSE, "%s", message);
   gtk_window_set_title (
-    GTK_WINDOW (dialog), "Zrythm");
+    GTK_WINDOW (dialog), PROGRAM_NAME);
   gtk_window_set_icon_name (
     GTK_WINDOW (dialog), "zrythm");
   if (parent_window)
@@ -545,6 +548,32 @@ ui_show_notification_idle_func (char * msg)
 }
 
 /**
+ * Converts RGB to hex string.
+ */
+void
+ui_rgb_to_hex (
+  double red,
+  double green,
+  double blue,
+  char * buf)
+{
+  sprintf (
+    buf, "#%hhx%hhx%hhx",
+    (char) (red * 255.0),
+    (char) (green * 255.0),
+    (char) (blue * 255.0));
+}
+
+void
+ui_gdk_rgba_to_hex (
+  GdkRGBA * color,
+  char *    buf)
+{
+  ui_rgb_to_hex (
+    color->red, color->green, color->blue, buf);
+}
+
+/**
  * Returns the modifier type (state mask) from the
  * given gesture.
  */
@@ -898,10 +927,10 @@ ui_get_locale_not_available_string (
 {
   /* show warning */
 #ifdef _WOE32
-  char * template =
+  char template =
     _("A locale for the language you have \
 selected (%s) is not available. Please install one first \
-and restart Zrythm");
+and restart %s");
 #else
   char * template =
     _("A locale for the language you have selected is \
@@ -911,13 +940,13 @@ the steps below and try again.\n\
 language code <b>%s</b> in <b>/etc/locale.gen</b> (needs \
 root privileges)\n\
 2. Run <b>locale-gen</b> as root\n\
-3. Restart Zrythm");
+3. Restart %s");
 #endif
 
   const char * code =
     localization_get_string_code (lang);
   char * str =
-    g_strdup_printf (template, code);
+    g_strdup_printf (template, code, PROGRAM_NAME);
 
   return str;
 }
@@ -1160,6 +1189,7 @@ ui_rectangle_overlap (
   GdkRectangle * rect1,
   GdkRectangle * rect2)
 {
+  g_return_val_if_fail (rect1 && rect2, false);
   /* if one rect is on the side of the other */
   if (rect1->x > rect2->x + rect2->width ||
       rect2->x > rect1->x + rect1->width)
@@ -1261,6 +1291,15 @@ ui_get_normalized_draggable_value (
   g_return_val_if_reached (0.0);
 }
 
+UiDetail
+ui_get_detail_level (void)
+{
+  return
+    (UiDetail)
+    g_settings_get_enum (
+      S_P_UI_GENERAL, "graphic-detail");
+}
+
 UiCaches *
 ui_caches_new ()
 {
@@ -1284,6 +1323,8 @@ ui_caches_new ()
 
   GET_COLOR_FROM_THEME (bright_green);
   GET_COLOR_FROM_THEME (darkish_green);
+  GET_COLOR_FROM_THEME (dark_orange);
+  GET_COLOR_FROM_THEME (bright_orange);
   GET_COLOR_FROM_THEME (matcha);
   GET_COLOR_FROM_THEME (prefader_send);
   GET_COLOR_FROM_THEME (postfader_send);
@@ -1309,4 +1350,19 @@ ui_caches_new ()
     UI_COLOR_HIGHLIGHT_CHORD);
 
   return self;
+}
+
+void
+ui_caches_free (
+  UiCaches * self)
+{
+  for (int i = 0; i < self->num_cursors; i++)
+    {
+      UiCursor * cursor = &self->cursors[i];
+
+      g_object_unref (cursor->cursor);
+      g_object_unref (cursor->pixbuf);
+    }
+
+  object_zero_and_free (self);
 }

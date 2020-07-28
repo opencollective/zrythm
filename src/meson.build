@@ -19,6 +19,7 @@ zrythm_main = files ('main.c')
 zrythm_srcs = files ([
   'project.c',
   'zrythm.c',
+  'zrythm_app.c',
   ])
 
 if os_darwin
@@ -48,6 +49,7 @@ zrythm_link_libs = [
   lv2_lib,
   widgets_lib,
   midilib,
+  zita_resampler_lib,
   ]
 
 if guile_dep.found ()
@@ -60,7 +62,9 @@ if os_windows
   zrythm_lib_srcs += win_res
 endif
 
-zrythm_lib = static_library (
+# static is used in the executable and shared is
+# used in tests
+zrythm_lib = both_libraries (
   'zrythm-lib',
   sources: [
     zrythm_lib_srcs,
@@ -76,7 +80,7 @@ zrythm_lib = static_library (
 objects = []
 
 zrythm_exe = executable (
-  'zrythm',
+  prog_name_lowercase,
   sources: [
     zrythm_main,
     zrythm_resources,
@@ -85,7 +89,7 @@ zrythm_exe = executable (
     zrythm_deps,
     ],
   link_with: [
-    zrythm_lib,
+    zrythm_lib.get_static_lib (),
     ],
   export_dynamic: true,
   gui_app: true,

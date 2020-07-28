@@ -17,12 +17,12 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
-
-#ifdef HAVE_RTAUDIO
-
 #ifndef __AUDIO_ENGINE_RTAUDIO_H__
 #define __AUDIO_ENGINE_RTAUDIO_H__
+
+#include "zrythm-config.h"
+
+#ifdef HAVE_RTAUDIO
 
 #include <rtaudio/rtaudio_c.h>
 
@@ -39,12 +39,12 @@ typedef struct AudioEngine AudioEngine;
  */
 int
 engine_rtaudio_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 void
 engine_rtaudio_activate (
-  AudioEngine * self);
+  AudioEngine * self,
+  bool          activate);
 
 rtaudio_t
 engine_rtaudio_create_rtaudio (
@@ -86,5 +86,5 @@ engine_rtaudio_tear_down (
  * @}
  */
 
-#endif
 #endif // HAVE_RTAUDIO
+#endif

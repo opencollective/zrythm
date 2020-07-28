@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_SDL
 
@@ -37,8 +37,7 @@ typedef struct AudioEngine AudioEngine;
  */
 int
 engine_sdl_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 /**
  * Returns a list of names inside \ref names that
@@ -67,7 +66,8 @@ engine_sdl_test (
 
 void
 engine_sdl_activate (
-  AudioEngine * self);
+  AudioEngine * self,
+  bool          activate);
 
 /**
  * Closes Port Audio.

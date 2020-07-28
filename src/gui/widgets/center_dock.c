@@ -25,7 +25,9 @@
 #include "gui/widgets/pinned_tracklist.h"
 #include "gui/widgets/timeline_panel.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 G_DEFINE_TYPE (
   CenterDockWidget,
@@ -88,6 +90,25 @@ center_dock_widget_setup (
     G_OBJECT (self->center_paned), "notify::position",
     G_CALLBACK (on_divider_pos_changed),
     self->center_paned);
+}
+
+/**
+ * Prepare for finalization.
+ */
+void
+center_dock_widget_tear_down (
+  CenterDockWidget * self)
+{
+  if (self->left_dock_edge)
+    {
+      left_dock_edge_widget_tear_down (
+        self->left_dock_edge);
+    }
+  if (self->timeline_panel)
+    {
+      timeline_panel_widget_tear_down (
+        self->timeline_panel);
+    }
 }
 
 static void

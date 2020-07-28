@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2019-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -17,30 +17,21 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+/**
+ * \file
+ *
+ * Audio group track.
+ */
+
 #ifndef __AUDIO_AUDIO_GROUP_TRACK_H__
 #define __AUDIO_AUDIO_GROUP_TRACK_H__
 
-#include "audio/channel_track.h"
-#include "audio/track.h"
-
-typedef struct Position Position;
-typedef struct _TrackWidget TrackWidget;
-typedef struct Channel Channel;
-typedef struct AutomationTrack AutomationTrack;
-typedef struct Automatable Automatable;
+typedef struct Track Track;
 
 void
 audio_group_track_init (Track * track);
 
 void
 audio_group_track_setup (Track * self);
-
-/**
- * Frees the track.
- *
- * TODO
- */
-void
-audio_group_track_free (Track * track);
 
 #endif // __AUDIO_AUDIO_BUS_TRACK_H__

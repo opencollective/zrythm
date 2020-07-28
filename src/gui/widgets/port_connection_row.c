@@ -17,11 +17,14 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "actions/undoable_action.h"
+#include "actions/undo_manager.h"
 #include "audio/port.h"
 #include "gui/widgets/bar_slider.h"
 #include "gui/widgets/knob.h"
 #include "gui/widgets/port_connection_row.h"
 #include "gui/widgets/port_connections_popover.h"
+#include "project.h"
 #include "utils/gtk.h"
 
 #include <gtk/gtk.h>
@@ -50,7 +53,12 @@ on_del_clicked (
   GtkButton *               btn,
   PortConnectionRowWidget * self)
 {
-  port_disconnect (self->src, self->dest);
+  UndoableAction * ua =
+    port_connection_action_new (
+      PORT_CONNECTION_DISCONNECT,
+      &self->src->id, &self->dest->id);
+  undo_manager_perform (UNDO_MANAGER, ua);
+
   port_connections_popover_widget_refresh (
     self->parent);
 }
@@ -87,7 +95,7 @@ port_connection_row_widget_new (
   /* power button */
   GtkToggleButton * btn =
     z_gtk_toggle_button_new_with_icon (
-      "z-network-connect");
+      "network-connect");
   gtk_toggle_button_set_active (btn, enabled);
   gtk_widget_set_visible (GTK_WIDGET (btn), 1);
   gtk_box_pack_start (
@@ -127,7 +135,7 @@ port_connection_row_widget_new (
   self->delete_btn =
     GTK_BUTTON (
       gtk_button_new_from_icon_name (
-        "z-edit-delete", GTK_ICON_SIZE_BUTTON));
+        "edit-delete", GTK_ICON_SIZE_BUTTON));
   gtk_widget_set_visible (
     GTK_WIDGET (self->delete_btn), 1);
   gtk_container_add (

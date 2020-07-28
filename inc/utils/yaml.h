@@ -133,16 +133,6 @@
     &schema, 0, CYAML_UNLIMITED)
 
 /**
- * Fixed sequence of pointers.
- */
-#define YAML_FIELD_SEQUENCE_FIXED( \
-  owner,member,schema,size) \
-  CYAML_FIELD_SEQUENCE_FIXED ( \
-    #member, CYAML_FLAG_DEFAULT, \
-    owner, member, \
-    &schema, size)
-
-/**
  * Dynamic-width (reallocated) array of pointers
  * with variable count, nullable.
  *
@@ -152,13 +142,39 @@
  * int                ats_size;
  * @endcode@
  */
-#define YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL( \
+#define YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT( \
   owner,member,schema) \
-  CYAML_FIELD_SEQUENCE_COUNT ( \
-    #member, \
-    CYAML_FLAG_POINTER | CYAML_FLAG_OPTIONAL, \
-    owner, member, num_##member, \
-    &schema, 0, CYAML_UNLIMITED)
+  YAML_FIELD_DYN_ARRAY_VAR_COUNT (\
+    owner,member,schema)
+
+/**
+ * Dynamic-width (reallocated) array of primitives
+ * with variable count.
+ *
+ * @code@
+ * int * ids;
+ * int   num_ids;
+ * int   ids_size;
+ * @endcode@
+ *
+ * @note \ref schema must be declared as
+ *   CYAML_VALUE_MAPPING with the flag
+ *   CYAML_FLAG_DEFAULT.
+ */
+#define YAML_FIELD_DYN_ARRAY_VAR_COUNT_PRIMITIVES( \
+  owner,member,schema) \
+  YAML_FIELD_DYN_ARRAY_VAR_COUNT ( \
+    owner, member, schema)
+
+/**
+ * Fixed sequence of pointers.
+ */
+#define YAML_FIELD_SEQUENCE_FIXED( \
+  owner,member,schema,size) \
+  CYAML_FIELD_SEQUENCE_FIXED ( \
+    #member, CYAML_FLAG_DEFAULT, \
+    owner, member, \
+    &schema, size)
 
 #define YAML_FIELD_INT(owner,member) \
   CYAML_FIELD_INT ( \
@@ -322,8 +338,7 @@ static const cyaml_config_t cyaml_config = {
 static const cyaml_schema_value_t
 int_schema = {
   CYAML_VALUE_INT (
-    CYAML_FLAG_DEFAULT,
-    typeof (int)),
+    CYAML_FLAG_DEFAULT, int),
 };
 
 static const cyaml_schema_value_t

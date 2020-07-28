@@ -25,22 +25,12 @@
 G_DEFINE_TYPE (
   MeterWidget, meter_widget, GTK_TYPE_DRAWING_AREA)
 
-#define GET_REAL_VAL ((*self->getter) (self->object))
-
-static float
-meter_val_from_real (MeterWidget * self)
-{
-  float amp = math_dbfs_to_amp (GET_REAL_VAL);
-  return math_get_fader_val_from_amp (amp);
-}
-
 static int
 meter_draw_cb (
   GtkWidget * widget,
-  cairo_t * cr, void* data)
+  cairo_t * cr,
+  MeterWidget * self)
 {
-  MeterWidget * self = (MeterWidget *) widget;
-
   GtkStyleContext *context =
   gtk_widget_get_style_context (widget);
 
@@ -52,18 +42,10 @@ meter_draw_cb (
   gtk_render_background (
     context, cr, 0, 0, width, height);
 
-  float meter_val = -1.0;
-  if (!self->getter || !self->object)
-    return FALSE;
-  switch (self->type)
-    {
-    case METER_TYPE_DB:
-      meter_val = meter_val_from_real (self);
-      break;
-    case METER_TYPE_MIDI:
-      meter_val = GET_REAL_VAL;
-      break;
-    }
+  /* get values */
+  float peak = self->meter_peak;
+  float meter_val = self->meter_val;
+
   float value_px = (float) height * meter_val;
   if (value_px < 0)
     value_px = 0;
@@ -72,28 +54,39 @@ meter_draw_cb (
   float width_without_padding =
     (float) (width - self->padding * 2);
 
+  GdkRGBA bar_color = { 0, 0, 0, 1 };
   double intensity = (double) meter_val;
-  if (self->type == METER_TYPE_DB)
-    {
-      const double intensity_inv = 1.0 - intensity;
-      double r =
-        intensity_inv * self->end_color.red +
-        intensity * self->start_color.red;
-      double g =
-        intensity_inv * self->end_color.green +
-        intensity * self->start_color.green;
-      double b =
-        intensity_inv * self->end_color.blue  +
-        intensity * self->start_color.blue;
-      /*float a = intensity_inv * self->end_color.alpha  +*/
-                /*intensity * self->start_color.alpha;*/
-      cairo_set_source_rgba (cr, r,g,b, 1.0);
-    }
-  else if (self->type == METER_TYPE_MIDI)
-    {
-      gdk_cairo_set_source_rgba (
-        cr, &self->end_color);
-    }
+  const double intensity_inv = 1.0 - intensity;
+  bar_color.red =
+    intensity_inv * self->end_color.red +
+    intensity * self->start_color.red;
+  bar_color.green =
+    intensity_inv * self->end_color.green +
+    intensity * self->start_color.green;
+  bar_color.blue =
+    intensity_inv * self->end_color.blue  +
+    intensity * self->start_color.blue;
+
+  gdk_cairo_set_source_rgba (cr, &bar_color);
+
+  /* use gradient */
+  cairo_pattern_t * pat =
+    cairo_pattern_create_linear (
+      0.0, 0.0, 0.0, height);
+  cairo_pattern_add_color_stop_rgba (
+    pat, 0,
+    bar_color.red, bar_color.green,
+    bar_color.blue, 1);
+  cairo_pattern_add_color_stop_rgba (
+    pat, 0.5,
+    bar_color.red, bar_color.green,
+    bar_color.blue, 1);
+  cairo_pattern_add_color_stop_rgba (
+    pat, 0.75, 0, 1, 0, 1);
+  cairo_pattern_add_color_stop_rgba (
+    pat, 1, 0, 0.2, 1, 1);
+  cairo_set_source (
+    cr, pat);
 
   float x = self->padding;
   cairo_rectangle (
@@ -101,7 +94,9 @@ meter_draw_cb (
     (float) height - value_px,
     x + width_without_padding,
     value_px);
-  cairo_fill(cr);
+  cairo_fill (cr);
+
+  cairo_pattern_destroy (pat);
 
   /* draw border line */
   cairo_set_source_rgba (
@@ -122,30 +117,33 @@ meter_draw_cb (
     (float) height - value_px);
   cairo_stroke (cr);
 
-  /* draw line for highest db (peak) */
-  if (self->max_getter)
+  /* draw peak */
+  float peak_amp =
+    math_get_amp_val_from_fader (peak);
+  if (peak_amp > 1.f)
     {
-      float max_amp =
-        self->max_getter (self->object);
-      /*g_message ("amp %f", (double) max_amp);*/
-      if (max_amp > 0.001f)
-        {
-          value_px =
-            math_get_fader_val_from_amp (max_amp);
-          /*g_message ("amp %f", (double) value_px);*/
-          value_px *= height;
-
-          cairo_set_source_rgba (
-            cr, 0.6, 0.1, 0.05, 1);
-          cairo_set_line_width (cr, 2.0);
-          cairo_move_to (
-            cr, x, (float) height - value_px);
-          cairo_line_to (
-            cr, x * 2 + width_without_padding,
-            (float) height - value_px);
-          cairo_stroke (cr);
-        }
+      cairo_set_source_rgba (
+        /* make higher peak brighter */
+        cr, 0.6 + 0.4 * (double) peak, 0.1, 0.05, 1);
     }
+  else
+    {
+      cairo_set_source_rgba (
+        /* make higher peak brighter */
+        cr,
+        0.4 + 0.4 * (double) peak,
+        0.4 + 0.4 * (double) peak,
+        0.4 + 0.4 * (double) peak,
+        1);
+    }
+  cairo_set_line_width (cr, 2.0);
+  double peak_px = (double) peak * height;
+  cairo_move_to (
+    cr, x, height - peak_px);
+  cairo_line_to (
+    cr, x * 2 + width_without_padding,
+    height - peak_px);
+  cairo_stroke (cr);
 
   return FALSE;
 }
@@ -155,7 +153,8 @@ static void
 on_crossing (GtkWidget * widget, GdkEvent *event)
 {
   MeterWidget * self = Z_METER_WIDGET (widget);
-  GdkEventType type = gdk_event_get_event_type (event);
+  GdkEventType type =
+    gdk_event_get_event_type (event);
   if (type == GDK_ENTER_NOTIFY)
     {
       self->hover = 1;
@@ -167,33 +166,82 @@ on_crossing (GtkWidget * widget, GdkEvent *event)
   gtk_widget_queue_draw(widget);
 }
 
+static gboolean
+tick_cb (
+  GtkWidget * widget,
+  GdkFrameClock * frame_clock,
+  MeterWidget * self)
+{
+  gtk_widget_queue_draw (widget);
+
+  return G_SOURCE_CONTINUE;
+}
+
+/*
+ * Timeout to "run" the meter.
+ */
+static gboolean
+meter_timeout (
+  MeterWidget * self)
+{
+  if (GTK_IS_WIDGET (self))
+    {
+      if (self->meter &&
+          gtk_widget_get_mapped (
+            GTK_WIDGET (self)))
+        {
+          meter_get_value (
+            self->meter, AUDIO_VALUE_FADER,
+            &self->meter_val,
+            &self->meter_peak);
+        }
+      else
+        {
+          /* not mapped, skipping dsp */
+        }
+
+      return G_SOURCE_CONTINUE;
+    }
+  else
+    return G_SOURCE_REMOVE;
+}
+
 /**
  * Creates a new Meter widget and binds it to the
  * given value.
  *
- * @param getter Getter func.
- * @param max_getter Getter func for max (pass
- *   NULL for midi).
- * @param object Objet to call get with.
- * @param type Meter type.
+ * @param port Port this meter is for.
  */
 void
 meter_widget_setup (
   MeterWidget *      self,
-  GenericFloatGetter getter,
-  GenericFloatGetter max_getter,
-  void        *      object,
-  MeterType          type,
+  Port *             port,
   int                width)
 {
-  self->getter = getter;
-  self->max_getter = max_getter;
-  self->object = object;
-  self->type = type;
+  if (self->meter)
+    {
+      meter_free (self->meter);
+    }
+  self->meter = meter_new_for_port (port);
   self->padding = 2;
 
   /* set size */
-  gtk_widget_set_size_request (GTK_WIDGET (self), width, -1);
+  gtk_widget_set_size_request (
+    GTK_WIDGET (self), width, -1);
+}
+
+static void
+finalize (
+  MeterWidget * self)
+{
+  if (self->meter)
+    meter_free (self->meter);
+
+  g_source_remove (self->source_id);
+
+  G_OBJECT_CLASS (
+    meter_widget_parent_class)->
+      finalize (G_OBJECT (self));
 }
 
 static void
@@ -214,12 +262,23 @@ meter_widget_init (MeterWidget * self)
   g_signal_connect (
     G_OBJECT(self), "leave-notify-event",
     G_CALLBACK (on_crossing),  self);
+
+  gtk_widget_add_tick_callback (
+    GTK_WIDGET (self), (GtkTickCallback) tick_cb,
+    self, NULL);
+  self->source_id =
+    g_timeout_add (
+      20, (GSourceFunc) meter_timeout, self);
 }
 
 static void
 meter_widget_class_init (MeterWidgetClass * _klass)
 {
-  GtkWidgetClass * klass = GTK_WIDGET_CLASS (_klass);
+  GtkWidgetClass * klass =
+    GTK_WIDGET_CLASS (_klass);
   gtk_widget_class_set_css_name (
     klass, "meter");
+
+  GObjectClass * oklass = G_OBJECT_CLASS (_klass);
+  oklass->finalize = (GObjectFinalizeFunc) finalize;
 }

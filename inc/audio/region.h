@@ -43,6 +43,7 @@ typedef struct MidiNote MidiNote;
 typedef struct TrackLane TrackLane;
 typedef struct _AudioClipWidget AudioClipWidget;
 typedef struct RegionLinkGroup RegionLinkGroup;
+typedef struct Stretcher Stretcher;
 
 /**
  * @addtogroup audio
@@ -60,6 +61,32 @@ typedef struct RegionLinkGroup RegionLinkGroup;
 #define region_is_selected(r) \
   arranger_object_is_selected ( \
     (ArrangerObject *) r)
+
+/**
+ * Musical mode setting for audio regions.
+ */
+typedef enum RegionMusicalMode
+{
+  /** Inherit from global musical mode setting. */
+  REGION_MUSICAL_MODE_INHERIT,
+  /** Musical mode off - don't auto-stretch when
+   * BPM changes. */
+  REGION_MUSICAL_MODE_OFF,
+  /** Musical mode on - auto-stretch when BPM
+   * changes. */
+  REGION_MUSICAL_MODE_ON,
+} RegionMusicalMode;
+
+static const cyaml_strval_t
+region_musical_mode_strings[] =
+{
+  { __("Inherit"),
+    REGION_MUSICAL_MODE_INHERIT },
+  { __("Off"),
+    REGION_MUSICAL_MODE_OFF },
+  { __("On"),
+    REGION_MUSICAL_MODE_ON },
+};
 
 /**
  * A region (clip) is an object on the timeline that
@@ -113,21 +140,38 @@ typedef struct ZRegion
   int               pool_id;
 
   /**
-   * Whether currently stretching.
+   * Whether currently running the stretching
+   * algorithm.
    *
    * If this is true, region drawing will be
    * deferred.
    */
-  int               stretching;
+  bool              stretching;
 
   /**
-   * Frames to actually use.
+   * The length before stretching, in ticks.
+   */
+  double            before_length;
+
+  /** Used during arranger UI overlay actions. */
+  double            stretch_ratio;
+
+  /**
+   * Frames to actually use, interleaved.
    *
    * Properties such as \ref AudioClip.channels can
    * be fetched from the AudioClip.
    */
   sample_t *        frames;
   size_t            num_frames;
+
+  /**
+   * Per-channel frames for convenience.
+   */
+  sample_t *        ch_frames[16];
+
+  /** Musical mode setting. */
+  RegionMusicalMode musical_mode;
 
   /* ==== AUDIO REGION END ==== */
 
@@ -171,6 +215,12 @@ typedef struct ZRegion
    */
   int                bounce;
 
+  /* these are used for caching */
+  GdkRectangle       last_main_full_rect;
+
+  /** Last main draw rect. */
+  GdkRectangle       last_main_draw_rect;
+
   int                magic;
 } ZRegion;
 
@@ -202,6 +252,9 @@ static const cyaml_schema_field_t
     CYAML_FLAG_POINTER | CYAML_FLAG_OPTIONAL,
     ZRegion, chord_objects, num_chord_objects,
     &chord_object_schema, 0, CYAML_UNLIMITED),
+  YAML_FIELD_ENUM (
+    ZRegion, musical_mode,
+    region_musical_mode_strings),
 
   CYAML_FIELD_END
 };
@@ -485,6 +538,24 @@ region_get_type_as_string (
   char *     buf);
 
 /**
+ * Returns if this region is currently being
+ * recorded onto.
+ */
+bool
+region_is_recording (
+  ZRegion * self);
+
+/**
+ * Returns whether the region is effectively in
+ * musical mode.
+ *
+ * @note Only applicable to audio regions.
+ */
+bool
+region_get_musical_mode (
+  ZRegion * self);
+
+/**
  * Removes the MIDI note and its components
  * completely.
  */
@@ -519,6 +590,26 @@ void
 region_copy_children (
   ZRegion * dest,
   ZRegion * src);
+
+/**
+ * Returns the ArrangerSelections based on the
+ * given region type.
+ */
+ArrangerSelections *
+region_get_arranger_selections (
+  ZRegion * self);
+
+/**
+ * Sanity checking.
+ *
+ * @param is_project Whether this region ispart
+ *   of the project (as opposed to a clone in
+ *   the undo stack, etc.).
+ */
+bool
+region_sanity_check (
+  ZRegion * self,
+  bool      is_project);
 
 /**
  * Disconnects the region and anything using it.

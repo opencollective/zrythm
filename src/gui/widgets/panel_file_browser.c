@@ -42,6 +42,7 @@
 #include "utils/io.h"
 #include "utils/resources.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -394,9 +395,8 @@ on_row_activated (GtkTreeView       *tree_view,
       loc->path = descr->abs_path;
       loc->label = g_path_get_basename (loc->path);
       file_manager_set_selection (
-        loc,
-        FB_SELECTION_TYPE_LOCATIONS,
-        1);
+        FILE_MANAGER, loc,
+        FB_SELECTION_TYPE_LOCATIONS, true);
       self->files_tree_model =
         GTK_TREE_MODEL_FILTER (
           create_model_for_files (self));
@@ -412,7 +412,7 @@ on_row_activated (GtkTreeView       *tree_view,
       UndoableAction * action =
         create_tracks_action_new (
           TRACK_TYPE_AUDIO, NULL, descr,
-          TRACKLIST->num_tracks, 1);
+          TRACKLIST->num_tracks, PLAYHEAD, 1);
       undo_manager_perform (UNDO_MANAGER, action);
     }
 }

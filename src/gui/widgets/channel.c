@@ -26,7 +26,7 @@
 #include "actions/undoable_action.h"
 #include "actions/undo_manager.h"
 #include "audio/master_track.h"
-#include "audio/mixer.h"
+#include "audio/meter.h"
 #include "audio/track.h"
 #include "gui/widgets/balance_control.h"
 #include "gui/widgets/bot_dock_edge.h"
@@ -37,18 +37,20 @@
 #include "gui/widgets/editable_label.h"
 #include "gui/widgets/expander_box.h"
 #include "gui/widgets/meter.h"
+#include "gui/widgets/mixer.h"
 #include "gui/widgets/fader.h"
 #include "gui/widgets/knob.h"
 #include "gui/widgets/plugin_strip_expander.h"
-#include "gui/widgets/mixer.h"
 #include "gui/widgets/route_target_selector.h"
 #include "plugins/lv2_plugin.h"
 #include "project.h"
 #include "utils/gtk.h"
 #include "utils/math.h"
 #include "utils/resources.h"
+#include "utils/symap.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -69,15 +71,15 @@ G_DEFINE_TYPE (ChannelWidget,
  */
 gboolean
 channel_widget_update_meter_reading (
-  ChannelWidget * widget,
+  ChannelWidget * self,
   GdkFrameClock * frame_clock,
   gpointer        user_data)
 {
-  double prev = widget->meter_reading_val;
-  Channel * channel = widget->channel;
+  double prev = self->meter_reading_val;
+  Channel * channel = self->channel;
 
   if (!gtk_widget_get_mapped (
-        GTK_WIDGET (widget)))
+        GTK_WIDGET (self)))
     {
       return G_SOURCE_CONTINUE;
     }
@@ -88,46 +90,47 @@ channel_widget_update_meter_reading (
   if (track->out_signal_type == TYPE_EVENT)
     {
       gtk_label_set_text (
-        widget->meter_reading, "-∞");
-      gtk_widget_queue_draw (
-        GTK_WIDGET (widget->meter_l));
-      gtk_widget_queue_draw (
-        GTK_WIDGET (widget->meter_r));
+        self->meter_reading, "-∞");
       return G_SOURCE_CONTINUE;
     }
 
-  /* calc decibels */
-  channel_set_current_l_db (
-    channel,
-    math_calculate_rms_db (
-      channel->stereo_out->l->buf,
-      AUDIO_ENGINE->nframes));
-  channel_set_current_r_db (
-    channel,
-    math_calculate_rms_db (
-      channel->stereo_out->r->buf,
-      AUDIO_ENGINE->nframes));
-
-  double val =
-    (channel_get_current_l_db (channel) +
-      channel_get_current_r_db (channel)) / 2;
+  float amp =
+    MAX (
+      self->meter_l->meter->prev_max,
+      self->meter_r->meter->prev_max);
+  double val = (double) math_amp_to_dbfs (amp);
   if (math_doubles_equal (val, prev))
     return G_SOURCE_CONTINUE;
-  char * string;
   if (val < -100.)
-    gtk_label_set_text (widget->meter_reading, "-∞");
+    gtk_label_set_text (self->meter_reading, "-∞");
   else
     {
-      string = g_strdup_printf ("%.1f", val);
-      gtk_label_set_text (widget->meter_reading, string);
-      g_free (string);
+      char string[40];
+      if (val < -10.)
+        {
+          sprintf (string, "%.0f", val);
+        }
+      else
+        {
+          sprintf (string, "%.1f", val);
+        }
+      char formatted_str[80];
+      if (val > 0)
+        {
+          sprintf (
+            formatted_str,
+            "<span foreground=\"#FF0A05\">%s</span>",
+            string);
+        }
+      else
+        {
+          strcpy (formatted_str, string);
+        }
+      gtk_label_set_markup (
+        self->meter_reading, formatted_str);
     }
-  gtk_widget_queue_draw (
-    GTK_WIDGET (widget->meter_l));
-  gtk_widget_queue_draw (
-    GTK_WIDGET (widget->meter_r));
 
-  widget->meter_reading_val = val;
+  self->meter_reading_val = val;
 
   return G_SOURCE_CONTINUE;
 }
@@ -448,36 +451,10 @@ on_btn_release (
             SELECTION_TYPE_TRACK;
         }
 
-      int ctrl = 0, selected = 0;
-
-      if (event->state & GDK_CONTROL_MASK)
-        ctrl = 1;
-
-      if (tracklist_selections_contains_track (
-            TRACKLIST_SELECTIONS,
-            track))
-        selected = 1;
-
-      /* no control & not selected */
-      if (!ctrl && !selected)
-        {
-          tracklist_selections_select_single (
-            TRACKLIST_SELECTIONS,
-            track);
-        }
-      else if (!ctrl && selected)
-        {
-        }
-      else if (ctrl && !selected)
-        {
-          tracklist_selections_add_track (
-            TRACKLIST_SELECTIONS, track, 1);
-        }
-      else if (ctrl && selected && !self->dragged)
-        {
-          tracklist_selections_remove_track (
-            TRACKLIST_SELECTIONS, track, 1);
-        }
+      bool ctrl = event->state & GDK_CONTROL_MASK;
+      bool shift = event->state & GDK_SHIFT_MASK;
+      tracklist_selections_handle_click (
+        track, ctrl, shift, self->dragged);
     }
 
   return FALSE;
@@ -504,7 +481,7 @@ on_solo_toggled (
     channel_get_track (self->channel);
   track_set_soloed (
     track,
-    gtk_toggle_button_get_active (btn), 1);
+    gtk_toggle_button_get_active (btn), true, true);
 }
 
 static void
@@ -516,7 +493,7 @@ on_mute_toggled (GtkToggleButton * btn,
   track_set_muted (
     track,
     gtk_toggle_button_get_active (btn),
-    1, 1);
+    true, true);
 }
 
 /*static void*/
@@ -568,16 +545,14 @@ setup_phase_panel (ChannelWidget * self)
 static void
 setup_meter (ChannelWidget * self)
 {
-  MeterType type = METER_TYPE_DB;
   Track * track =
     channel_get_track (self->channel);
   switch (track->out_signal_type)
     {
     case TYPE_EVENT:
-      type = METER_TYPE_MIDI;
       meter_widget_setup (
-        self->meter_l, channel_get_current_l_db,
-        NULL, self->channel, type, 14);
+        self->meter_l,
+        self->channel->midi_out, 14);
       gtk_widget_set_margin_start (
         GTK_WIDGET (self->meter_l), 5);
       gtk_widget_set_margin_end (
@@ -586,15 +561,12 @@ setup_meter (ChannelWidget * self)
         GTK_WIDGET (self->meter_r), 0);
       break;
     case TYPE_AUDIO:
-      type = METER_TYPE_DB;
       meter_widget_setup (
-        self->meter_l, channel_get_current_l_db,
-        channel_get_current_l_peak,
-        self->channel, type, 12);
+        self->meter_l,
+        self->channel->stereo_out->l, 12);
       meter_widget_setup (
-        self->meter_r, channel_get_current_r_db,
-        channel_get_current_r_peak,
-        self->channel, type, 12);
+        self->meter_r,
+        self->channel->stereo_out->r, 12);
       break;
     default:
       break;
@@ -692,7 +664,7 @@ channel_widget_refresh_buttons (
   gtk_toggle_button_set_active (
     self->record, track->recording);
   gtk_toggle_button_set_active (
-    self->solo, track->solo);
+    self->solo, track_get_soloed (track));
   gtk_toggle_button_set_active (
     self->mute, track_get_muted (track));
   channel_widget_unblock_all_signal_handlers (
@@ -765,9 +737,7 @@ static void
 on_destroy (
   ChannelWidget * self)
 {
-  self->channel->widget = NULL;
-
-  g_object_unref (self);
+  channel_widget_tear_down (self);
 }
 
 ChannelWidget *
@@ -782,7 +752,7 @@ channel_widget_new (Channel * channel)
     self->inserts, PLUGIN_SLOT_INSERT,
     PSE_POSITION_CHANNEL, channel->track);
   fader_widget_setup (
-    self->fader, &channel->fader, 38, -1);
+    self->fader, channel->fader, 38, -1);
   setup_meter (self);
   setup_balance_control (self);
   setup_channel_icon (self);
@@ -795,6 +765,25 @@ channel_widget_new (Channel * channel)
     track_set_name_with_events);
   route_target_selector_widget_setup (
     self->output, self->channel);
+
+#if 0
+  /*if (self->channel->track->type ==*/
+        /*TRACK_TYPE_INSTRUMENT)*/
+    /*{*/
+      self->instrument_slot =
+        channel_slot_widget_new (
+          -1, self->channel, PLUGIN_SLOT_INSTRUMENT,
+          true);
+      gtk_widget_set_visible (
+        GTK_WIDGET (self->instrument_slot), true);
+      gtk_widget_set_hexpand (
+        GTK_WIDGET (self->instrument_slot), true);
+      gtk_container_add (
+        GTK_CONTAINER (self->instrument_box),
+        GTK_WIDGET (self->instrument_slot));
+    /*}*/
+#endif
+
   channel_widget_refresh (self);
 
   gtk_widget_add_tick_callback (
@@ -809,7 +798,28 @@ channel_widget_new (Channel * channel)
 
   g_object_ref (self);
 
+  self->setup = true;
+
   return self;
+}
+
+/**
+ * Prepare for finalization.
+ */
+void
+channel_widget_tear_down (
+  ChannelWidget * self)
+{
+  g_message ("tearing down %p...", self);
+
+  if (self->setup)
+    {
+      g_object_unref (self);
+      self->channel->widget = NULL;
+      self->setup = false;
+    }
+
+  g_message ("done");
 }
 
 static void
@@ -833,6 +843,7 @@ channel_widget_class_init (
   BIND_CHILD (icon_and_name_event_box);
   BIND_CHILD (name);
   BIND_CHILD (inserts);
+  BIND_CHILD (instrument_box);
   BIND_CHILD (e);
   BIND_CHILD (solo);
   BIND_CHILD (listen);

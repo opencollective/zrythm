@@ -35,7 +35,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef _WOE32
 
@@ -43,11 +43,12 @@
 #include "audio/engine.h"
 #include "audio/engine_windows_mme.h"
 #include "audio/master_track.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/port.h"
 #include "audio/windows_mme_device.h"
 #include "audio/windows_mmcss.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/ui.h"
 
 #include <gtk/gtk.h>
@@ -127,18 +128,37 @@ engine_windows_mme_print_error (
  * Starts all previously scanned devices.
  */
 int
-engine_windows_mme_start_known_devices (
-  AudioEngine * self)
+engine_windows_mme_activate (
+  AudioEngine * self,
+  bool          activate)
 {
+  if (activate)
+    {
+      g_message ("%s: activating...", __func__);
+    }
+  else
+    {
+      g_message ("%s: deactivating...", __func__);
+    }
+
   for (int i = 0; i < self->num_mme_in_devs; i++)
     {
       WindowsMmeDevice * dev =
         self->mme_in_devs[i];
-      g_return_val_if_fail (
-        dev->opened == 1 && dev->started == 0, -1);
-      int ret =
-        windows_mme_device_start (dev);
-      g_return_val_if_fail (ret == 0, -1);
+
+      if (activate)
+        {
+          g_return_val_if_fail (
+            dev->opened == 1 &&
+            dev->started == 0, -1);
+          int ret =
+            windows_mme_device_start (dev);
+          g_return_val_if_fail (ret == 0, -1);
+        }
+      else
+        {
+          windows_mme_device_stop (dev);
+        }
     }
   for (int i = 0; i < self->num_mme_out_devs; i++)
     {
@@ -146,14 +166,22 @@ engine_windows_mme_start_known_devices (
 	    break;
       WindowsMmeDevice * dev =
         self->mme_out_devs[i];
-      g_return_val_if_fail (
-        dev->opened == 1 && dev->started == 0, -1);
-      int ret =
-        windows_mme_device_start (dev);
-      g_return_val_if_fail (ret == 0, -1);
+      if (activate)
+        {
+          g_return_val_if_fail (
+            dev->opened == 1 &&
+            dev->started == 0, -1);
+          int ret =
+            windows_mme_device_start (dev);
+          g_return_val_if_fail (ret == 0, -1);
+        }
+      else
+        {
+          windows_mme_device_stop (dev);
+        }
     }
 
-  g_message ("MME devices successfully started");
+  g_message ("%s: done", __func__);
 
   return 0;
 }
@@ -232,7 +260,7 @@ engine_windows_mme_rescan_devices (
 
   if (start)
     {
-      engine_windows_mme_start_known_devices (self);
+      engine_windows_mme_activate (self, true);
     }
 
   return 0;
@@ -243,8 +271,7 @@ engine_windows_mme_rescan_devices (
  */
 int
 engine_windows_mme_setup (
-  AudioEngine * self,
-  int           loading)
+  AudioEngine * self)
 {
   g_message ("Initing MMCSS...");
   windows_mmcss_initialize ();

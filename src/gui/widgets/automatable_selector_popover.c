@@ -17,16 +17,17 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "audio/automatable.h"
 #include "audio/automation_track.h"
 #include "audio/channel_track.h"
 #include "audio/engine.h"
-#include "gui/backend/events.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/automatable_selector_popover.h"
 #include "plugins/plugin.h"
 #include "project.h"
 #include "utils/gtk.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>

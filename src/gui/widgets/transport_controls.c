@@ -21,8 +21,10 @@
 #include "audio/transport.h"
 #include "audio/midi.h"
 #include "gui/widgets/transport_controls.h"
+#include "settings/settings.h"
 #include "utils/flags.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 

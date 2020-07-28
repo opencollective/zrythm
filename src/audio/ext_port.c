@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include "audio/engine.h"
 #include "audio/engine_jack.h"
@@ -28,9 +28,10 @@
 #include "audio/rtmidi_device.h"
 #include "audio/windows_mme_device.h"
 #include "project.h"
+#include "zrythm_app.h"
 
 #ifdef HAVE_JACK
-#include <jack/jack.h>
+#include "weak_libjack.h"
 #endif
 
 /**

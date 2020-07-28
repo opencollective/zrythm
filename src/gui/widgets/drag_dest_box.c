@@ -26,7 +26,6 @@
 #include "actions/move_plugins_action.h"
 #include "actions/move_tracks_action.h"
 #include "audio/channel.h"
-#include "audio/mixer.h"
 #include "audio/modulator.h"
 #include "audio/track.h"
 #include "audio/tracklist.h"
@@ -38,7 +37,6 @@
 #include "gui/widgets/drag_dest_box.h"
 #include "gui/widgets/file_browser.h"
 #include "gui/widgets/main_window.h"
-#include "gui/widgets/mixer.h"
 #include "gui/widgets/right_dock_edge.h"
 #include "gui/widgets/track.h"
 #include "gui/widgets/tracklist.h"
@@ -50,6 +48,7 @@
 #include "utils/symap.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -278,7 +277,8 @@ on_drag_data_received (
           UndoableAction * ua =
             create_tracks_action_new (
               track_type, NULL, file,
-              TRACKLIST->num_tracks, 1);
+              TRACKLIST->num_tracks,
+              PLAYHEAD, 1);
           if (IS_URI_LIST)
             {
               supported_file_free (file);
@@ -315,7 +315,8 @@ on_drag_data_received (
           UndoableAction * ua =
             create_tracks_action_new (
               tt, pd, NULL,
-              TRACKLIST->num_tracks, 1);
+              TRACKLIST->num_tracks,
+              PLAYHEAD, 1);
 
           undo_manager_perform (UNDO_MANAGER, ua);
         }
@@ -495,22 +496,18 @@ show_context_menu (DragDestBoxWidget * self)
   submenu = gtk_menu_new ();
   menu_item =
     z_gtk_create_menu_item (
-      _("Audio FX"),
-      NULL,
-      ICON_TYPE_GNOME_BUILDER,
-      NULL,
-      0,
+      _(track_type_to_string (
+          TRACK_TYPE_AUDIO_BUS)),
+      NULL, ICON_TYPE_GNOME_BUILDER, NULL, 0,
       "win.create-audio-bus-track");
   gtk_menu_shell_append (
     GTK_MENU_SHELL (submenu),
     GTK_WIDGET (menu_item));
   menu_item =
     z_gtk_create_menu_item (
-      _("MIDI FX"),
-      NULL,
-      ICON_TYPE_GNOME_BUILDER,
-      NULL,
-      0,
+      _(track_type_to_string (
+          TRACK_TYPE_MIDI_BUS)),
+      NULL, ICON_TYPE_GNOME_BUILDER, NULL, 0,
       "win.create-midi-bus-track");
   gtk_menu_shell_append (
     GTK_MENU_SHELL (submenu),
@@ -529,22 +526,18 @@ show_context_menu (DragDestBoxWidget * self)
   submenu = gtk_menu_new ();
   menu_item =
     z_gtk_create_menu_item (
-      _("Audio Group"),
-      NULL,
-      ICON_TYPE_GNOME_BUILDER,
-      NULL,
-      0,
+      _(track_type_to_string (
+          TRACK_TYPE_AUDIO_GROUP)),
+      NULL, ICON_TYPE_GNOME_BUILDER, NULL, 0,
       "win.create-audio-group-track");
   gtk_menu_shell_append (
     GTK_MENU_SHELL (submenu),
     GTK_WIDGET (menu_item));
   menu_item =
     z_gtk_create_menu_item (
-      _("MIDI Group"),
-      NULL,
-      ICON_TYPE_GNOME_BUILDER,
-      NULL,
-      0,
+      _(track_type_to_string (
+          TRACK_TYPE_MIDI_GROUP)),
+      NULL, ICON_TYPE_GNOME_BUILDER, NULL, 0,
       "win.create-midi-group-track");
   gtk_menu_shell_append (
     GTK_MENU_SHELL (submenu),
@@ -678,9 +671,13 @@ drag_dest_box_widget_new (
       symap_map (ZSYMAP, TARGET_ENTRY_TRACK),
     }
   };
+  /* disable for now */
+  (void) entries;
+#if 0
   gtk_drag_dest_set (
     GTK_WIDGET (self), GTK_DEST_DEFAULT_ALL,
     entries, G_N_ELEMENTS (entries), GDK_ACTION_COPY);
+#endif
   g_free (entry_track);
   g_free (entry_plugin);
   g_free (entry_plugin_descr);

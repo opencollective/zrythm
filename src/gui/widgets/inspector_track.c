@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "gui/backend/events.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/tracklist_selections.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/channel_sends_expander.h"
@@ -32,8 +32,10 @@
 #include "gui/widgets/track_properties_expander.h"
 #include "gui/widgets/text_expander.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/gtk.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -235,6 +237,24 @@ inspector_track_widget_new (void)
       INSPECTOR_TRACK_WIDGET_TYPE, NULL);
 
   return self;
+}
+
+/**
+ * Prepare for finalization.
+ */
+void
+inspector_track_widget_tear_down (
+  InspectorTrackWidget * self)
+{
+  g_message ("tearing down %p...", self);
+
+  if (self->fader)
+    {
+      fader_controls_expander_widget_tear_down (
+        self->fader);
+    }
+
+  g_message ("done");
 }
 
 static void

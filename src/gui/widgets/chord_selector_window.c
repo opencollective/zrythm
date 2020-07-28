@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2019-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -21,12 +21,15 @@
 #include "audio/chord_object.h"
 #include "audio/chord_track.h"
 #include "audio/scale_object.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/chord_object.h"
 #include "gui/widgets/chord_selector_window.h"
 #include "gui/widgets/timeline_arranger.h"
 #include "project.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -47,6 +50,9 @@ on_delete_event (
   GdkEvent  *event,
   ChordSelectorWindowWidget * self)
 {
+  /* update the keys */
+  chord_descriptor_update_notes (self->descr);
+
   EVENTS_PUSH (ET_CHORD_KEY_CHANGED, self->descr);
 
   return FALSE;
@@ -166,21 +172,6 @@ creator_select_type (
 }
 
 static void
-creator_select_accent (
-  GtkFlowBox * box,
-  GtkFlowBoxChild * child,
-  ChordSelectorWindowWidget * self)
-{
-  for (int i = 0; i < NUM_CHORD_ACCENTS - 1; i++)
-    {
-      if (self->creator_accents[i] != child)
-        continue;
-
-      self->descr->accent = i + 1;
-    }
-}
-
-static void
 creator_select_bass_note (
   GtkFlowBox * box,
   GtkFlowBoxChild * child,
@@ -241,14 +232,31 @@ on_creator_type_selected_children_changed (
 }
 
 static void
-on_creator_accent_selected_children_changed (
-  GtkFlowBox * flowbox,
+on_creator_accent_child_activated (
+  GtkFlowBox *                flowbox,
+  GtkFlowBoxChild *           child,
   ChordSelectorWindowWidget * self)
 {
-  gtk_flow_box_selected_foreach (
-    flowbox,
-    (GtkFlowBoxForeachFunc) creator_select_accent,
-    self);
+  for (int i = 0; i < NUM_CHORD_ACCENTS - 1; i++)
+    {
+      if (self->creator_accents[i] != child)
+        continue;
+
+      ChordAccent accent = (ChordAccent) (i + 1);
+
+      /* if selected, deselect it */
+      if (self->descr->accent == accent)
+        {
+          gtk_flow_box_unselect_child (
+            flowbox, child);
+          self->descr->accent = CHORD_ACC_NONE;
+        }
+      /* else select it */
+      else
+        {
+          self->descr->accent = accent;
+        }
+    }
 }
 
 static void
@@ -316,6 +324,11 @@ setup_creator_tab (
       SELECT_CHORD_ACC (j7, j7);
       SELECT_CHORD_ACC (b9, b9);
       SELECT_CHORD_ACC (9, 9);
+      SELECT_CHORD_ACC (S9, s9);
+      SELECT_CHORD_ACC (11, 11);
+      SELECT_CHORD_ACC (b5_S11, b5_s11);
+      SELECT_CHORD_ACC (S5_b13, s5_b13);
+      SELECT_CHORD_ACC (6_13, 6_13);
       default:
         break;
     }
@@ -336,6 +349,9 @@ setup_creator_tab (
     GTK_WIDGET (self->creator_visibility_in_scale),
     self->scale != NULL);
 
+  gtk_flow_box_set_activate_on_single_click (
+    self->creator_accent_flowbox, true);
+
   /* setup signals */
   g_signal_connect (
     G_OBJECT (self->creator_root_note_flowbox),
@@ -347,8 +363,9 @@ setup_creator_tab (
     G_CALLBACK (on_creator_type_selected_children_changed), self);
   g_signal_connect (
     G_OBJECT (self->creator_accent_flowbox),
-    "selected-children-changed",
-    G_CALLBACK (on_creator_accent_selected_children_changed), self);
+    "child-activated",
+    G_CALLBACK (on_creator_accent_child_activated),
+    self);
   g_signal_connect (
     G_OBJECT (self->creator_bass_note_flowbox),
     "selected-children-changed",
@@ -437,9 +454,10 @@ creator_filter (
           if (child != self->creator_root_notes[i])
             continue;
 
-          return
+          bool ret =
             musical_scale_is_key_in_scale (
               self->scale->scale, i);
+          return ret;
         }
 
       /* bass notes */

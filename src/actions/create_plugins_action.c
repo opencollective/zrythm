@@ -19,11 +19,15 @@
 
 #include "actions/create_plugins_action.h"
 #include "audio/channel.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/flags.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -47,20 +51,6 @@ create_plugins_action_new (
   self->track_pos = track_pos;
   plugin_descriptor_copy (descr, &self->descr);
   self->num_plugins = num_plugins;
-
-  for (int i = 0; i < num_plugins; i++)
-    {
-      self->plugins[i] =
-        plugin_new_from_descr (
-          &self->descr, track_pos, slot + i);
-      plugin_instantiate (
-        self->plugins[i]);
-    }
-  if (self->plugins[0]->lv2)
-    {
-      g_warn_if_fail (
-        self->plugins[0]->lv2->num_ports > 0);
-    }
 
   return ua;
 }
@@ -87,7 +77,7 @@ create_plugins_action_do (
       plugin_set_track_pos (pl, self->track_pos);
 
       /* instantiate */
-      int ret = plugin_instantiate (pl);
+      int ret = plugin_instantiate (pl, true, NULL);
       g_return_val_if_fail (!ret, -1);
 
       /* add to channel */
@@ -96,7 +86,8 @@ create_plugins_action_do (
         self->slot + i, pl, 1, 1,
         F_NO_RECALC_GRAPH, F_NO_PUBLISH_EVENTS);
 
-      if (g_settings_get_boolean (
+      if (ZRYTHM_HAVE_UI &&
+          g_settings_get_boolean (
             S_P_PLUGINS_UIS,
             "open-on-instantiate"))
         {
@@ -104,9 +95,13 @@ create_plugins_action_do (
           EVENTS_PUSH (ET_PLUGIN_VISIBILITY_CHANGED,
                        pl);
         }
+
+      /* activate */
+      ret = plugin_activate (pl, F_ACTIVATE);
+      g_return_val_if_fail (!ret, -1);
     }
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   EVENTS_PUSH (ET_CHANNEL_SLOTS_CHANGED,
                ch);
@@ -136,7 +131,7 @@ create_plugins_action_undo (
                    ch);
     }
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   return 0;
 }

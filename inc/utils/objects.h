@@ -26,28 +26,11 @@
  * @{
  */
 
-/** Calls _free_later after doing the casting so the
- * caller doesn't have to. */
-#define free_later(obj,func) \
-  _free_later((void *)obj, (void (*) (void *)) func)
-
 /**
- * Frees the object after a while.
- *
- * This is useful when the object will be in use for a
- * while, for example in the current processing cycle.
+ * Allocates memory for an object of type \ref type.
  */
-void
-_free_later (
-  void * object,
-  void (*dfunc) (void *));
-
-/**
- * Inits the subsystems for the object utils in this
- * file.
- */
-void
-object_utils_init (void);
+#define object_new(type) \
+  calloc (1, sizeof (type))
 
 /**
  * Zero's out the struct pointed to by \ref ptr.
@@ -62,18 +45,10 @@ object_utils_init (void);
  * frees the object.
  */
 #define object_zero_and_free(ptr) \
-  object_set_to_zero (ptr); \
-  free (ptr)
-
-/**
- * Frees memory, sets the pointer to NULL and
- * zero's out the struct.
- *
- * @param ptr A pointer to a pointer to be free'd.
- */
-#define object_free_zero_and_null(ptr) \
-  { object_set_to_zero (*ptr); \
-    free (*ptr); *ptr = NULL; }
+  if (ptr) { \
+    object_set_to_zero (ptr); \
+    free (ptr); \
+    ptr = NULL; };
 
 /**
  * Frees memory, sets the pointer to NULL and
@@ -82,16 +57,27 @@ object_utils_init (void);
  * @param ptr A pointer to a pointer to be free'd.
  */
 #define g_object_unref_and_null(ptr) \
-  { g_object_unref (ptr); ptr = NULL; }
-
-#define g_free_if_exists(ptr) \
-  { if (ptr) g_free (ptr); (ptr) = NULL; }
+  if (ptr) { g_object_unref (ptr); ptr = NULL; }
 
 /**
  * Frees memory and sets the pointer to NULL.
  */
 #define g_free_and_null(ptr) \
-  { g_free (*ptr); *ptr = NULL; }
+  { if (ptr) g_free (ptr); (ptr) = NULL; }
+
+/**
+ * Call the function \ref _func to free \ref _obj
+ * and set \ref _obj to NULL.
+ */
+#define object_free_w_func_and_null(_func,_obj) \
+  if (_obj) { _func (_obj); _obj = NULL; }
+
+#define object_free_w_func_and_null_cast(\
+  _func,_cast,_obj) \
+  if (_obj) { _func ((_cast)_obj); _obj = NULL; }
+
+#define g_source_remove_and_zero(src_id) \
+  { g_source_remove (src_id); src_id = 0; }
 
 /**
  * @}

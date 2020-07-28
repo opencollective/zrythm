@@ -23,7 +23,7 @@
  * Bottomest widget holding a status bar.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include "audio/engine.h"
 #include "audio/engine_jack.h"
@@ -35,9 +35,11 @@
 #include "gui/widgets/top_bar.h"
 #include "gui/widgets/transport_controls.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/gtk.h"
 #include "utils/resources.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -424,32 +426,40 @@ bot_bar_widget_update_status (
     MW_STATUS_BAR,
     MW_BOT_BAR->context_id);
 
-  /*const char * orange = UI_COLOR_BRIGHT_ORANGE;*/
-#define ORANGIZE(x) \
-  "<span " \
-  "foreground=\"" UI_COLOR_BRIGHT_ORANGE "\">" x "</span>"
+  char color_prefix[60];
+  sprintf (
+    color_prefix,
+    "<span foreground=\"%s\">",
+    self->hex_color);
+  char color_suffix[40] = "</span>";
 
-  char str[400];
+  char str[460];
   sprintf (
     str,
     "<span size=\"small\">"
-    "%s: " ORANGIZE ("%s") " | "
-    "%s: " ORANGIZE ("%s") "\n"
-    "%s: " ORANGIZE ("%d frames") " | "
-    "%s: " ORANGIZE ("%d Hz")
+    "%s: %s%s%s | "
+    "%s: %s%s%s \n"
+    "%s: %s%d frames%s | "
+    "%s: %s%d Hz%s"
     "</span>",
     _("Audio"),
+    color_prefix,
     engine_audio_backend_to_string (
       AUDIO_ENGINE->audio_backend),
+    color_suffix,
     "MIDI",
+    color_prefix,
     engine_midi_backend_to_string (
       AUDIO_ENGINE->midi_backend),
+    color_suffix,
     _("Buffer size"),
+    color_prefix,
     AUDIO_ENGINE->block_length,
+    color_suffix,
     _("Sample rate"),
-    AUDIO_ENGINE->sample_rate);
-
-#undef ORANGIZE
+    color_prefix,
+    AUDIO_ENGINE->sample_rate,
+    color_suffix);
 
   gtk_statusbar_push (MW_STATUS_BAR,
                       MW_BOT_BAR->context_id,
@@ -513,6 +523,9 @@ bot_bar_widget_init (BotBarWidget * self)
   g_type_ensure (CPU_WIDGET_TYPE);
 
   gtk_widget_init_template (GTK_WIDGET (self));
+
+  ui_gdk_rgba_to_hex (
+    &UI_COLORS->bright_orange, self->hex_color);
 
   /* setup digital meters */
   self->digital_bpm =

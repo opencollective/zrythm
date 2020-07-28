@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
 
-if (help2man.found())
+if help2man.found() and not os_windows
 manpage = custom_target (
   'manpage',
   input: 'zrythm.h2m',
@@ -35,9 +35,9 @@ manpage = custom_target (
     '--version-string=Zrythm ' + meson.project_version (),
     zrythm_exe,
     ],
-  install: get_option ('with-manpage'),
+  install: get_option ('manpage'),
   install_dir: mandir,
-  build_by_default: get_option ('with-manpage'),
+  build_by_default: get_option ('manpage'),
   )
 
 run_target (

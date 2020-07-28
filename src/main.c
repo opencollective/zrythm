@@ -17,14 +17,11 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <ctype.h>
 #ifdef _WOE32
 #include <windows.h>
-#include <dbghelp.h>
-#else
-#include <execinfo.h>
 #endif
 #include <getopt.h>
 #include <signal.h>
@@ -34,12 +31,20 @@
 #include <unistd.h>
 
 #include "gui/widgets/main_window.h"
+#include "gui/widgets/dialogs/bug_report_dialog.h"
+#include "utils/backtrace.h"
+#include "utils/gdb.h"
 #include "guile/guile.h"
 #include "utils/gtk.h"
+#include "utils/log.h"
 #include "utils/math.h"
 #include "utils/objects.h"
 #include "utils/ui.h"
+#include "utils/valgrind.h"
+#include "project.h"
+#include "settings/settings.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -62,168 +67,38 @@
 #include <X11/Xlib.h>
 #endif
 
-#define BACKTRACE_SIZE 100
-
 /** SIGSEGV handler. */
 static void
 segv_handler (int sig)
 {
-  char message[12000];
-  char current_line[2000];
-
+  char prefix[200];
 #ifdef _WOE32
-  unsigned int   i;
-  void         * stack[ 100 ];
-  unsigned short frames;
-  SYMBOL_INFO  * symbol;
-  HANDLE         process;
-
-  process = GetCurrentProcess();
-
-  SymInitialize (process, NULL, TRUE);
-
-  frames =
-    CaptureStackBackTrace (0, 100, stack, NULL);
-  symbol =
-    (SYMBOL_INFO *)
-    calloc (
-      sizeof (SYMBOL_INFO) + 256 * sizeof( char ),
-      1);
-  symbol->MaxNameLen = 255;
-  symbol->SizeOfStruct = sizeof (SYMBOL_INFO);
-
-  sprintf (
-    message,
-    _("Error - Backtrace:\n"), sig);
-  for (i = 0; i < frames; i++)
-    {
-      SymFromAddr (
-        process, (DWORD64) (stack[i]), 0,
-        symbol);
-
-      sprintf (
-        current_line,
-        "%u: %s - 0x%0X\n", frames - i - 1,
-        symbol->Name, symbol->Address);
-      strcat (message, current_line);
-    }
-  free (symbol);
+  strcpy (
+    prefix, _("Error - Backtrace:\n"));
 #else
-  void *array[BACKTRACE_SIZE];
-  char ** strings;
-
-  /* get void*'s for all entries on the stack */
-  int size = backtrace (array, BACKTRACE_SIZE);
-
-  /* print out all the frames to stderr */
-  const char * signal_string = strsignal (sig);
   sprintf (
-    message,
-    _("Error: %s - Backtrace:\n"), signal_string);
-  strings = backtrace_symbols (array, size);
-  for (int i = 0; i < size; i++)
-    {
-      sprintf (current_line, "%s\n", strings[i]);
-      strcat (message, current_line);
-    }
-  free (strings);
+    prefix,
+    _("Error: %s - Backtrace:\n"), strsignal (sig));
 #endif
+  char * bt = backtrace_get (prefix, 100);
 
   /* call the callback to write queued messages
    * and get last few lines of the log, before
    * logging the backtrace */
   log_idle_cb (LOG);
-  char * log =
-    log_get_last_n_lines (LOG, 60);
-  g_message ("%s", message);
+  g_message ("%s", bt);
   log_idle_cb (LOG);
 
-  GtkDialogFlags flags =
-    GTK_DIALOG_DESTROY_WITH_PARENT;
+  char str[500];
+  sprintf (
+    str, _("%s has crashed. "), PROGRAM_NAME);
   GtkWidget * dialog =
-    gtk_message_dialog_new_with_markup (
-      GTK_WINDOW (MAIN_WINDOW),
-      flags,
-      GTK_MESSAGE_ERROR,
-      GTK_BUTTONS_CLOSE,
-      NULL);
-
-  /* %23 is hash, %0A is new line */
-  char ver_with_caps[2000];
-  zrythm_get_version_with_capabilities (
-    ver_with_caps);
-  char * report_template =
-    g_strdup_printf (
-      "# Steps to reproduce\n"
-      "> Write a list of steps to reproduce the "
-      "bug\n\n"
-      "# What happens?\n"
-      "> Please tell us what happened\n\n"
-      "# What is expected?\n"
-      "> What is expected to happen?\n\n"
-      "# Version\n%s\n"
-      "# Other info\n"
-      "> Context, distro, etc.\n\n"
-      "# Backtrace\n```\n%s```\n\n"
-      "# Log\n```\n%s```",
-      ver_with_caps, message, log);
-  char * report_template_escaped =
-    g_uri_escape_string (
-      report_template, NULL, FALSE);
-  char * atag =
-    g_strdup_printf (
-      "<a href=\"%s?issue[description]=%s\">",
-      NEW_ISSUE_URL,
-      report_template_escaped);
-  char * markup =
-    g_strdup_printf (
-      _("Zrythm has crashed. Please help us fix "
-        "this by "
-        "%ssubmitting a bug report%s."),
-      atag,
-      "</a>");
-
-  gtk_message_dialog_set_markup (
-    GTK_MESSAGE_DIALOG (dialog),
-    markup);
-  gtk_message_dialog_format_secondary_markup (
-    GTK_MESSAGE_DIALOG (dialog),
-    "%s", message);
-  GtkLabel * label =
-    z_gtk_message_dialog_get_label (
-      GTK_MESSAGE_DIALOG (dialog), 1);
-  gtk_label_set_selectable (
-    label, 1);
-
-  /* wrap the backtrace in a scrolled window */
-  GtkBox * box =
-    GTK_BOX (
-      gtk_message_dialog_get_message_area (
-        GTK_MESSAGE_DIALOG (dialog)));
-  GtkWidget * secondary_area =
-    z_gtk_container_get_nth_child (
-      GTK_CONTAINER (box), 1);
-  gtk_container_remove (
-    GTK_CONTAINER (box), secondary_area);
-  GtkWidget * scrolled_window =
-    gtk_scrolled_window_new (NULL, NULL);
-  gtk_scrolled_window_set_min_content_height (
-    GTK_SCROLLED_WINDOW (scrolled_window), 360);
-  gtk_container_add (
-    GTK_CONTAINER (scrolled_window),
-    secondary_area);
-  gtk_container_add (
-    GTK_CONTAINER (box), scrolled_window);
-  gtk_widget_show_all (GTK_WIDGET (box));
+    bug_report_dialog_new (
+      GTK_WINDOW (MAIN_WINDOW), str, bt);
 
   /* run the dialog */
   gtk_dialog_run (GTK_DIALOG (dialog));
   gtk_widget_destroy (dialog);
-
-  g_free (report_template);
-  g_free (atag);
-  g_free (markup);
-  g_free (report_template_escaped);
 
   exit(1);
 }
@@ -249,18 +124,75 @@ print_help ()
 {
   fprintf (
     stdout,
-    _("Usage: zrythm [ OPTIONS ] [ PROJECT-NAME ]\n\n"
+    _("Usage: %s [ OPTIONS ] [ PROJECT-FILE-PATH ]\n\n"
     "Options:\n"
     "  -h, --help      display this help message and exit\n"
+    "  --convert-yaml-to-zpj  convert a yaml project to the .zpj format\n"
+    "  --convert-zpj-to-yaml  convert a zpj project to the YAML format\n"
+    "  -o, --output    specify an output file\n"
     "  -p, --print-settings  print current settings\n"
     "  --pretty        print output in user-friendly way\n"
     "  --reset-to-factory  reset to factory settings\n"
+    "  --gdb           run %s through GDB (debugger)\n"
+    "  --callgrind     run %s through callgrind (profiler)\n"
+    "  --audio-backend  override the audio backend to use\n"
+    "  --midi-backend  override the MIDI backend to use\n"
+    "  --dummy         overrides both the audio and MIDI backends to dummy\n"
+    "  --buf-size      overrides the buffer size to use for the audio backend, if applicable\n"
+    "  --interactive   interactive mode, where applicable\n"
     "  -v, --version   output version information and exit\n\n"
     "Examples:\n"
-    "  zrythm -v       print version\n"
-    "  zrythm -p --pretty  pretty-print current settings\n\n"
+    "  %s -v       print version\n"
+    "  %s --callgrind --dummy --buf-size=8192  profile %s using the dummy backend and a buffer size of 8192\n"
+    "  %s --convert-zpj-to-yaml myproject.zpj --output myproject.yaml  convert a compressed zpj project to YAML\n"
+    "  %s -p --pretty  pretty-print current settings\n\n"
     "Report bugs to %s\n"),
+    PROGRAM_NAME_LOWERCASE, PROGRAM_NAME,
+    PROGRAM_NAME, PROGRAM_NAME_LOWERCASE,
+    PROGRAM_NAME_LOWERCASE, PROGRAM_NAME,
+    PROGRAM_NAME_LOWERCASE, PROGRAM_NAME_LOWERCASE,
     ISSUE_TRACKER_URL);
+}
+
+/**
+ * Checks that the file exists and exits if it
+ * doesn't.
+ */
+void
+verify_file_exists (
+  char * file)
+{
+  if (!file ||
+      !g_file_test (file, G_FILE_TEST_EXISTS))
+    {
+      char str[600];
+      sprintf (
+        str, _("File %s not found."), file);
+      strcat (str, "\n");
+      fprintf (stderr, "%s", str);
+      exit (-1);
+    }
+}
+
+/**
+ * Checks that the output is not NULL and exits if it
+ * is.
+ */
+void
+verify_output_exists (
+  char * output)
+{
+  if (!output)
+    {
+      char str[600];
+      sprintf (
+        str,
+        "%s\n",
+        _("An output file was not specified. Please "
+        "pass one with `--output [FILE]`."));
+      fprintf (stderr, "%s", str);
+      exit (-1);
+    }
 }
 
 /**
@@ -273,31 +205,70 @@ main (int    argc,
 #define OPT_VERSION 'v'
 #define OPT_HELP 'h'
 #define OPT_PRINT_SETTINGS 'p'
+#define OPT_OUTPUT 'o'
 #define OPT_RESET_TO_FACTORY 6492
 #define OPT_PRETTY_PRINT 5914
+#define OPT_CONVERT_ZPJ_TO_YAML 4198
+#define OPT_CONVERT_YAML_TO_ZPJ 35173
+#define OPT_GDB 4124
+#define OPT_CALLGRIND 6843
+#define OPT_AUDIO_BACKEND 4811
+#define OPT_MIDI_BACKEND 9197
+#define OPT_DUMMY 2311
+#define OPT_BUF_SIZE 39145
+#define OPT_INTERACTIVE 34966
 
   int c, option_index;
   static struct option long_options[] =
     {
-      {"version", no_argument, 0, OPT_VERSION},
-      {"help", no_argument, 0, OPT_HELP},
-      {"print-settings", no_argument, 0,
-        OPT_PRINT_SETTINGS},
-      {"reset-to-factory", no_argument,
-        0, OPT_RESET_TO_FACTORY},
-      {"pretty", no_argument,
-        0, OPT_PRETTY_PRINT},
-      {0, 0, 0, 0}
+      { "version", no_argument, 0, OPT_VERSION},
+      { "help", no_argument, 0, OPT_HELP },
+      { "convert-zpj-to-yaml", required_argument, 0,
+        OPT_CONVERT_ZPJ_TO_YAML },
+      { "convert-yaml-to-zpj", required_argument, 0,
+        OPT_CONVERT_YAML_TO_ZPJ },
+      { "output", required_argument, 0,
+        OPT_OUTPUT },
+      { "print-settings", no_argument, 0,
+        OPT_PRINT_SETTINGS },
+      { "reset-to-factory", no_argument,
+        0, OPT_RESET_TO_FACTORY },
+      { "pretty", no_argument, 0,
+        OPT_PRETTY_PRINT },
+      { "gdb", no_argument, 0, OPT_GDB },
+      { "callgrind", no_argument, 0,
+        OPT_CALLGRIND },
+      { "audio-backend", required_argument, 0,
+        OPT_AUDIO_BACKEND },
+      { "midi-backend", required_argument, 0,
+        OPT_MIDI_BACKEND },
+      { "dummy", no_argument, 0, OPT_DUMMY },
+      { "buf-size", required_argument, 0,
+        OPT_BUF_SIZE },
+      { "interactive", no_argument, 0,
+        OPT_INTERACTIVE },
+      { 0, 0, 0, 0 }
     };
   opterr = 0;
 
-  bool pretty_print = 0;
-  bool print_settings = 0;
-  while (1)
+  bool pretty_print = false;
+  bool print_settings = false;
+  bool convert_yaml_to_zpj = false;
+  bool convert_zpj_to_yaml = false;
+  bool run_gdb = false;
+  bool run_callgrind = false;
+  bool interactive = false;
+  char * from_file = NULL;
+  char * output = NULL;
+  char * audio_backend = NULL;
+  char * midi_backend = NULL;
+  char * buf_size = NULL;
+  char * project_file = NULL;
+  while (true)
     {
       c =
         getopt_long (
-          argc, argv, "vhp",
+          argc, argv, "vhpo",
           long_options, &option_index);
 
       /* Detect the end of the options. */
@@ -308,20 +279,53 @@ main (int    argc,
         {
         case OPT_VERSION:
           print_version ();
-          return 0;
+          return EXIT_SUCCESS;
         case OPT_HELP:
           print_help ();
-          return 0;
+          return EXIT_SUCCESS;
+          break;
+        case OPT_CONVERT_ZPJ_TO_YAML:
+          convert_zpj_to_yaml = true;
+          from_file = optarg;
+          break;
+        case OPT_CONVERT_YAML_TO_ZPJ:
+          convert_yaml_to_zpj = true;
+          from_file = optarg;
+          break;
+        case OPT_OUTPUT:
+          output = optarg;
           break;
         case OPT_PRINT_SETTINGS:
           print_settings = true;
           break;
         case OPT_RESET_TO_FACTORY:
           settings_reset_to_factory (1, 1);
-          return 0;
+          return EXIT_SUCCESS;
           break;
         case OPT_PRETTY_PRINT:
           pretty_print = true;
+          break;
+        case OPT_GDB:
+          run_gdb = true;
+          break;
+        case OPT_CALLGRIND:
+          run_callgrind = true;
+          break;
+        case OPT_INTERACTIVE:
+          interactive = true;
+          break;
+        case OPT_AUDIO_BACKEND:
+          audio_backend = optarg;
+          break;
+        case OPT_MIDI_BACKEND:
+          midi_backend = optarg;
+          break;
+        case OPT_DUMMY:
+          audio_backend = "none";
+          midi_backend = "none";
+          break;
+        case OPT_BUF_SIZE:
+          buf_size = optarg;
           break;
         case '?':
           /* getopt_long already printed an error
@@ -333,23 +337,107 @@ main (int    argc,
         }
     }
 
+  /* get last non-option argument as project file */
+  for (int index = optind; index < argc; index++)
+    {
+      project_file = argv[index];
+    }
+
   if (print_settings)
     {
       localization_init (false, false);
       settings_print (pretty_print);
-      return 0;
+      return EXIT_SUCCESS;
+    }
+  else if (run_gdb)
+    {
+#ifdef __linux__
+      ZRYTHM = zrythm_new (TRUE, FALSE);
+      gdb_exec (argv, true, interactive);
+#else
+      g_error (
+        "This option is not available on your "
+        "platform");
+#endif
+    }
+  else if (run_callgrind)
+    {
+#ifdef __linux__
+      ZRYTHM = zrythm_new (TRUE, FALSE);
+      valgrind_exec_callgrind (argv);
+#else
+      g_error (
+        "This option is not available on your "
+        "platform");
+#endif
+    }
+  else if (convert_yaml_to_zpj)
+    {
+      verify_output_exists (output);
+      verify_file_exists (from_file);
+      char * err_msg =
+        project_compress (
+          &output, NULL,
+          PROJECT_COMPRESS_FILE,
+          from_file, -1,
+          PROJECT_COMPRESS_FILE);
+      if (err_msg)
+        {
+          fprintf (
+            stderr,
+            _("Project failed to compress: %s\n"),
+            err_msg);
+          g_free (err_msg);
+          return -1;
+        }
+      else
+        {
+          fprintf (
+            stdout,
+            _("Project successfully compressed.\n"));
+          return EXIT_SUCCESS;
+        }
+    }
+  else if (convert_zpj_to_yaml)
+    {
+      verify_output_exists (output);
+      verify_file_exists (from_file);
+      char * err_msg =
+        project_decompress (
+          &output, NULL,
+          PROJECT_DECOMPRESS_FILE,
+          from_file, -1,
+          PROJECT_DECOMPRESS_FILE);
+      if (err_msg)
+        {
+          fprintf (
+            stderr,
+            _("Project failed to decompress: %s\n"),
+            err_msg);
+          g_free (err_msg);
+          return -1;
+        }
+      else
+        {
+          fprintf (
+            stdout,
+            _("Project successfully "
+            "decompressed.\n"));
+          return EXIT_SUCCESS;
+        }
     }
 
   char * ver = zrythm_get_version (0);
   fprintf (
     stdout,
-    _("Zrythm-%s Copyright (C) 2018-2020 The Zrythm contributors\n\n"
-    "Zrythm comes with ABSOLUTELY NO WARRANTY!\n\n"
+    _("%s-%s Copyright (C) 2018-2020 The Zrythm contributors\n\n"
+    "%s comes with ABSOLUTELY NO WARRANTY!\n\n"
     "This is free software, and you are welcome to redistribute it\n"
     "under certain conditions. See the file `COPYING' for details.\n\n"
     "Write comments and bugs to %s\n"
     "Support this project at https://liberapay.com/Zrythm\n\n"),
-    ver, ISSUE_TRACKER_URL);
+    PROGRAM_NAME, ver, PROGRAM_NAME,
+    ISSUE_TRACKER_URL);
   g_free (ver);
 
   char * cur_dir = g_get_current_dir ();
@@ -365,7 +453,7 @@ main (int    argc,
 
   /* install segfault handler */
   g_message ("Installing signal handler...");
-  signal(SIGSEGV, segv_handler);
+  signal (SIGSEGV, segv_handler);
 
 #ifdef HAVE_X11
   /* init xlib threads */
@@ -405,20 +493,37 @@ main (int    argc,
   gtk_source_init ();
 #endif
 
-  /* init object utils */
-  g_message ("Initing object utils...");
-  object_utils_init ();
-
   /* init math coefficients */
   g_message ("Initing math coefficients...");
   math_init ();
 
   /* send activate signal */
   g_message ("Initing Zrythm app...");
-  zrythm_app = zrythm_app_new ();
-  g_message ("running Zrythm...");
+  zrythm_app =
+    zrythm_app_new (
+      audio_backend, midi_backend, buf_size);
 
-  return
-    g_application_run (
-      G_APPLICATION (zrythm_app), argc, argv);
+  g_message ("running Zrythm...");
+  int ret = 0;
+  if (project_file)
+    {
+      int g_argc = 2;
+      char * g_argv[3] = {
+        argv[0], project_file,
+      };
+
+      ret =
+        g_application_run (
+          G_APPLICATION (zrythm_app),
+          g_argc, g_argv);
+    }
+  else
+    {
+      ret =
+        g_application_run (
+          G_APPLICATION (zrythm_app), 0, NULL);
+    }
+  g_object_unref (zrythm_app);
+
+  return ret;
 }

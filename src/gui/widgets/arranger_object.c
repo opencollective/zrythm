@@ -49,6 +49,7 @@
 #include "utils/flags.h"
 #include "utils/math.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n-lib.h>
 
@@ -63,6 +64,8 @@ void
 arranger_object_queue_redraw (
   ArrangerObject * self)
 {
+  g_return_if_fail (IS_ARRANGER_OBJECT (self));
+
   ArrangerWidget * arranger =
     arranger_object_get_arranger (self);
   g_return_if_fail (arranger);
@@ -73,7 +76,15 @@ arranger_object_queue_redraw (
   /* if arranger is not visible ignore */
   if (arranger_rect.width < 2 &&
       arranger_rect.height < 2)
-    return;
+    {
+#if 0
+      arranger_object_print (self);
+      g_message (
+        "%s: arranger not visible, ignoring",
+        __func__);
+#endif
+      return;
+    }
 
   /* set rectangle if not initialized yet */
   if (self->full_rect.width == 0 &&
@@ -102,7 +113,15 @@ arranger_object_queue_redraw (
 
   /* if draw rect is not visible ignore */
   if (!draw_rect_visible)
-    return;
+    {
+#if 0
+      arranger_object_print (self);
+      g_message (
+        "%s: draw rect not visible, ignoring",
+        __func__);
+#endif
+      return;
+    }
 
   arranger_widget_redraw_rectangle (
     arranger, &draw_rect);
@@ -491,7 +510,7 @@ arranger_object_set_full_rectangle (
       {
         ChordObject * co = (ChordObject *) self;
         ChordDescriptor * descr =
-          CHORD_EDITOR->chords[co->index];
+          chord_object_get_chord_descriptor (co);
 
         ZRegion * region =
           arranger_object_get_region (self);
@@ -502,7 +521,8 @@ arranger_object_set_full_rectangle (
           region_obj->pos.total_ticks;
         Position tmp;
         int adj_px_per_key =
-          MW_CHORD_EDITOR_SPACE->px_per_key + 1;
+          chord_editor_space_widget_get_chord_height (
+            MW_CHORD_EDITOR_SPACE) + 1;
 
         /* use absolute position */
         position_from_ticks (
@@ -510,11 +530,9 @@ arranger_object_set_full_rectangle (
           region_start_ticks +
           self->pos.total_ticks);
         self->full_rect.x =
-          ui_pos_to_px_editor (
-            &tmp, 1);
+          ui_pos_to_px_editor (&tmp, 1);
         self->full_rect.y =
-          adj_px_per_key *
-          co->index;
+          adj_px_per_key * co->chord_index;
 
         char chord_str[100];
         chord_descriptor_to_string (
@@ -651,6 +669,10 @@ arranger_object_set_full_rectangle (
           (GtkWidget *) (arranger),
           0, 0,
           &wx, &wy);
+        /* for some reason it returns a few
+         * negatives at first */
+        if (wy < 0)
+          wy = 0;
 
         if (region->id.type == REGION_TYPE_CHORD)
           {
@@ -682,6 +704,10 @@ arranger_object_set_full_rectangle (
               (GtkWidget *) (track->widget),
               (GtkWidget *) (arranger),
               0, 0, &wx, &wy);
+            /* for some reason it returns a few
+             * negatives at first */
+            if (wy < 0)
+              wy = 0;
 
             self->full_rect.y =
               wy + at->y;
@@ -937,6 +963,7 @@ arranger_object_get_draw_rectangle (
       (full_rect->y + full_rect->height) -
       draw_rect->y);
   g_warn_if_fail (draw_rect->height >= 0);
+
   return 1;
   /*g_message ("full rect: (%d, %d) w: %d h: %d",*/
     /*full_rect->x, full_rect->y,*/
@@ -961,6 +988,14 @@ arranger_object_draw (
   cairo_t *        cr,
   GdkRectangle *   rect)
 {
+  if (!ui_rectangle_overlap (
+        &self->full_rect, rect))
+    {
+      g_message (
+        "%s: object not visible, skipping",
+        __func__);
+    }
+
   switch (self->type)
     {
     case TYPE (AUTOMATION_POINT):

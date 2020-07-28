@@ -18,7 +18,6 @@
 widget_srcs = files([
   'arranger.c',
   'arranger_object.c',
-  'audio_arranger.c',
   'audio_editor_space.c',
   'automatable_selector_popover.c',
   'automation_arranger.c',
@@ -99,6 +98,7 @@ widget_srcs = files([
   'modulator.c',
   'modulator_view.c',
   'panel_file_browser.c',
+  'piano_keyboard.c',
   'piano_roll_keys.c',
   'plugin_browser.c',
   'plugin_properties_expander.c',

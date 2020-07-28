@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_RTAUDIO
 
@@ -106,13 +106,39 @@ engine_rtaudio_create_rtaudio (
   return rtaudio;
 }
 
+static void
+print_dev_info (
+  rtaudio_device_info_t * nfo,
+  char *                  buf)
+{
+  sprintf (
+    buf,
+    "name: %s\n"
+    "probed: %d\n"
+    "output channels: %u\n"
+    "input channels: %u\n"
+    "duplex channels: %u\n"
+    "is default output: %d\n"
+    "is default input: %d\n"
+    "formats: TODO\n"
+    "preferred sample rate: %u\n"
+    "sample rates: TODO",
+    nfo->name,
+    nfo->probed,
+    nfo->output_channels,
+    nfo->input_channels,
+    nfo->duplex_channels,
+    nfo->is_default_output,
+    nfo->is_default_input,
+    nfo->preferred_sample_rate);
+}
+
 /**
  * Set up the engine.
  */
 int
 engine_rtaudio_setup (
-  AudioEngine * self,
-  int           loading)
+  AudioEngine * self)
 {
   g_message (
     "Setting up RtAudio %s...", rtaudio_version ());
@@ -143,11 +169,13 @@ engine_rtaudio_setup (
     {
       rtaudio_device_info_t dev_nfo =
         rtaudio_get_device_info (self->rtaudio, i);
+      char dev_nfo_str[800];
+      print_dev_info (&dev_nfo, dev_nfo_str);
       g_message (
-        "RtAudio device %d: %s",
-        i, dev_nfo.name);
+        "RtAudio device %d: %s", i, dev_nfo_str);
       if (string_is_equal (
-            dev_nfo.name, out_device, 1))
+            dev_nfo.name, out_device, 1) &&
+          dev_nfo.output_channels > 0)
         {
           out_device_id = i;
         }
@@ -208,34 +236,6 @@ engine_rtaudio_setup (
   self->block_length = buffer_size;
   self->sample_rate = (sample_rate_t) samplerate;
 
-  engine_update_frames_per_tick (
-    self, TRANSPORT->beats_per_bar,
-    TRANSPORT->bpm, self->sample_rate);
-
-  /* create ports */
-  Port * monitor_out_l, * monitor_out_r;
-  if (loading)
-    {
-    }
-  else
-    {
-      monitor_out_l =
-        port_new_with_type (
-          TYPE_AUDIO,
-          FLOW_OUTPUT,
-          "RtAudio Stereo Out / L");
-      monitor_out_r =
-        port_new_with_type (
-          TYPE_AUDIO,
-          FLOW_OUTPUT,
-          "RtAudio Stereo Out / R");
-
-      self->monitor_out =
-        stereo_ports_new_from_existing (
-          monitor_out_l,
-          monitor_out_r);
-    }
-
   g_message ("RtAudio set up");
 
   return 0;
@@ -243,11 +243,21 @@ engine_rtaudio_setup (
 
 void
 engine_rtaudio_activate (
-  AudioEngine * self)
+  AudioEngine * self,
+  bool          activate)
 {
-  rtaudio_start_stream (self->rtaudio);
+  if (activate)
+    {
+      g_message ("%s: activating...", __func__);
+      rtaudio_start_stream (self->rtaudio);
+    }
+  else
+    {
+      g_message ("%s: deactivating...", __func__);
+      rtaudio_stop_stream (self->rtaudio);
+    }
 
-  g_message ("RtAudio activated");
+  g_message ("%s: done", __func__);
 }
 
 /**

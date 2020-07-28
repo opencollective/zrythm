@@ -23,7 +23,7 @@
  * GAction actions.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include "actions/actions.h"
 #include "actions/arranger_selections.h"
@@ -31,11 +31,15 @@
 #include "actions/copy_tracks_action.h"
 #include "actions/create_tracks_action.h"
 #include "actions/delete_tracks_action.h"
+#include "audio/graph.h"
 #include "audio/graph_export.h"
 #include "audio/instrument_track.h"
 #include "audio/midi.h"
+#include "audio/router.h"
 #include "audio/track.h"
 #include "audio/transport.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/midi_arranger_selections.h"
 #include "gui/backend/timeline_selections.h"
 #include "gui/backend/tracklist_selections.h"
@@ -80,14 +84,17 @@
 #include "gui/widgets/toolbox.h"
 #include "gui/widgets/tracklist.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/dialogs.h"
 #include "utils/flags.h"
 #include "utils/gtk.h"
 #include "utils/io.h"
 #include "utils/localization.h"
+#include "utils/log.h"
 #include "utils/resources.h"
 #include "utils/stack.h"
 #include "utils/string.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -277,13 +284,21 @@ activate_preferences (
   GVariant      *variant,
   gpointer       user_data)
 {
-  PreferencesWidget * widget =
-    preferences_widget_new ();
+  if (MAIN_WINDOW->preferences_opened)
+    {
+      return;
+    }
+
+  GtkWindow * preferences_window =
+    GTK_WINDOW (
+      preferences_widget_new ());
+  g_return_if_fail (preferences_window);
   gtk_window_set_transient_for (
-    GTK_WINDOW (widget),
-    GTK_WINDOW (MAIN_WINDOW));
-  gtk_widget_set_visible (GTK_WIDGET (widget),
-                          1);
+    preferences_window,
+    (GtkWindow *) MAIN_WINDOW);
+  gtk_widget_show_all (
+    (GtkWidget *) preferences_window);
+  MAIN_WINDOW->preferences_opened = true;
 }
 
 /**
@@ -337,9 +352,10 @@ activate_scripting_interface (
       GTK_BUTTONS_OK,
       _("Scripting extensibility with "
       "<a href=\"%s\">GNU Guile</a> "
-      "is not enabled in your Zrythm "
+      "is not enabled in your %s "
       "installation."),
-      "https://www.gnu.org/software/guile");
+      "https://www.gnu.org/software/guile",
+      PROGRAM_NAME);
   gtk_window_set_transient_for (
     GTK_WINDOW (dialog),
     GTK_WINDOW (MAIN_WINDOW));
@@ -514,6 +530,9 @@ on_project_new_finish (
   GtkAssistant * _assistant,
   gpointer       user_data)
 {
+  g_message (
+    "%s (%s) called", __func__, __FILE__);
+
   ProjectAssistantWidget * pa =
     Z_PROJECT_ASSISTANT_WIDGET (_assistant);
   ZRYTHM->creating_project = 1;
@@ -544,7 +563,7 @@ on_project_new_finish (
         pa->project_selection->filename;
       g_message (
         "Loading project: %s",
-        zrythm->open_filename);
+        ZRYTHM->open_filename);
       ZRYTHM->creating_project = 0;
     }
   /* no selection, load blank project */
@@ -558,7 +577,7 @@ on_project_new_finish (
   /* if not loading a project, show dialog to
    * select directory and name */
   int quit = 0;
-  if (zrythm->creating_project)
+  if (ZRYTHM->creating_project)
     {
       CreateProjectDialogWidget * dialog =
         create_project_dialog_widget_new ();
@@ -569,21 +588,22 @@ on_project_new_finish (
         quit = 1;
       gtk_widget_destroy (GTK_WIDGET (dialog));
 
-      g_message ("creating project %s",
-                 zrythm->create_project_path);
+      g_message (
+        "%s (%s): creating project %s",
+        __func__, __FILE__,
+        ZRYTHM->create_project_path);
     }
+
+  /* FIXME error if the assistant is deleted
+   * here, setting invisible for now, but
+   * eventually must be destroyed */
+  gtk_widget_set_visible (GTK_WIDGET (pa), 0);
 
   if (quit)
     {
-      /* FIXME error if the assistant is deleted
-       * here, setting invisible for now, but
-       * eventually must be destroyed */
-      gtk_widget_set_visible (GTK_WIDGET (pa), 0);
     }
   else
     {
-      gtk_widget_set_visible (
-        GTK_WIDGET (pa), 0);
       project_load (
         ZRYTHM->open_filename,
         ZRYTHM->opening_template);
@@ -596,10 +616,14 @@ activate_new (GSimpleAction *action,
                   gpointer       user_data)
 {
 #ifdef TRIAL_VER
-  ui_show_error_message (
-    MAIN_WINDOW,
+  char msg[600];
+  sprintf (
+    msg,
     _("Creating new projects is disabled. Please "
-    "restart Zrythm to start a new project"));
+    "restart %s to start a new project"),
+    PROGRAM_NAME);
+  ui_show_error_message (
+    MAIN_WINDOW, msg);
   return;
 #endif
 
@@ -710,7 +734,8 @@ activate_save (GSimpleAction *action,
         action, variant, user_data);
       return;
     }
-  g_message ("%s project dir", PROJECT->dir);
+  g_message (
+    "project dir: %s", PROJECT->dir);
 
   project_save (
     PROJECT, PROJECT->dir, 0, 1, F_NO_ASYNC);
@@ -750,8 +775,8 @@ activate_save_as (GSimpleAction *action,
     chooser, TRUE);
 
   char * project_file_path =
-    project_get_project_file_path (
-      PROJECT, 0);
+    project_get_path (
+      PROJECT, PROJECT_PATH_PROJECT_FILE, false);
   char * str =
     io_path_get_parent_dir (
       project_file_path);
@@ -811,7 +836,8 @@ activate_export_graph (
   graph_setup (graph, false, false);
 
   char * exports_dir =
-    project_get_exports_dir (PROJECT);
+    project_get_path (
+      PROJECT, PROJECT_PATH_EXPORTS, false);
 
   GtkWidget *dialog, *label, *content_area;
   GtkDialogFlags flags;
@@ -831,13 +857,22 @@ activate_export_graph (
   char lbl[600];
   sprintf (
     lbl,
-    _("The graph will be exported to %s\n"
-    "Select a format to export as"), exports_dir);
-  label = gtk_label_new (lbl);
+    _("The graph will be exported to "
+    "<a href=\"%s\">%s</a>\n"
+    "Please select a format to export as"),
+    exports_dir, exports_dir);
+  label = gtk_label_new (NULL);
+  gtk_label_set_markup (
+    GTK_LABEL (label), lbl);
   gtk_widget_set_visible (label, true);
   gtk_label_set_justify (
     GTK_LABEL (label), GTK_JUSTIFY_CENTER);
   z_gtk_widget_set_margin (label, 3);
+
+  g_signal_connect (
+    G_OBJECT (label), "activate-link",
+    G_CALLBACK (z_gtk_activate_dir_link_func),
+    NULL);
 
  // Add the label, and show everything we’ve added
   gtk_container_add (
@@ -1440,11 +1475,8 @@ activate_create_audio_track (GSimpleAction *action,
 {
   UndoableAction * ua =
     create_tracks_action_new (
-      TRACK_TYPE_AUDIO,
-      NULL,
-      NULL,
-      TRACKLIST->num_tracks,
-      1);
+      TRACK_TYPE_AUDIO, NULL, NULL,
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
 
   undo_manager_perform (UNDO_MANAGER, ua);
 }
@@ -1456,11 +1488,8 @@ activate_create_ins_track (GSimpleAction *action,
 {
   UndoableAction * ua =
     create_tracks_action_new (
-      TRACK_TYPE_INSTRUMENT,
-      NULL,
-      NULL,
-      TRACKLIST->num_tracks,
-      1);
+      TRACK_TYPE_INSTRUMENT, NULL, NULL,
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
 
   undo_manager_perform (UNDO_MANAGER, ua);
 }
@@ -1473,11 +1502,8 @@ activate_create_midi_track (
 {
   UndoableAction * ua =
     create_tracks_action_new (
-      TRACK_TYPE_MIDI,
-      NULL,
-      NULL,
-      TRACKLIST->num_tracks,
-      1);
+      TRACK_TYPE_MIDI, NULL, NULL,
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
 
   undo_manager_perform (UNDO_MANAGER, ua);
 }
@@ -1489,11 +1515,8 @@ activate_create_audio_bus_track (GSimpleAction *action,
 {
   UndoableAction * ua =
     create_tracks_action_new (
-      TRACK_TYPE_AUDIO_BUS,
-      NULL,
-      NULL,
-      TRACKLIST->num_tracks,
-      1);
+      TRACK_TYPE_AUDIO_BUS, NULL, NULL,
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
 
   undo_manager_perform (UNDO_MANAGER, ua);
 }
@@ -1506,11 +1529,8 @@ activate_create_midi_bus_track (
 {
   UndoableAction * ua =
     create_tracks_action_new (
-      TRACK_TYPE_MIDI_BUS,
-      NULL,
-      NULL,
-      TRACKLIST->num_tracks,
-      1);
+      TRACK_TYPE_MIDI_BUS, NULL, NULL,
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
 
   undo_manager_perform (UNDO_MANAGER, ua);
 }
@@ -1523,11 +1543,8 @@ activate_create_audio_group_track (
 {
   UndoableAction * ua =
     create_tracks_action_new (
-      TRACK_TYPE_AUDIO_GROUP,
-      NULL,
-      NULL,
-      TRACKLIST->num_tracks,
-      1);
+      TRACK_TYPE_AUDIO_GROUP, NULL, NULL,
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
 
   undo_manager_perform (UNDO_MANAGER, ua);
 }
@@ -1540,11 +1557,8 @@ activate_create_midi_group_track (
 {
   UndoableAction * ua =
     create_tracks_action_new (
-      TRACK_TYPE_MIDI_GROUP,
-      NULL,
-      NULL,
-      TRACKLIST->num_tracks,
-      1);
+      TRACK_TYPE_MIDI_GROUP, NULL, NULL,
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
 
   undo_manager_perform (UNDO_MANAGER, ua);
 }
@@ -1729,6 +1743,15 @@ activate_quick_quantize (
     }
   else if (string_is_equal (variant, "editor", 1))
     {
+      ArrangerSelections * sel =
+        clip_editor_get_arranger_selections (
+          CLIP_EDITOR);
+      g_return_if_fail (sel);
+      UndoableAction * ua =
+        arranger_selections_action_new_quantize (
+          sel, QUANTIZE_OPTIONS_EDITOR);
+      undo_manager_perform (
+        UNDO_MANAGER, ua);
     }
   else if (string_is_equal (variant, "global", 1))
     {
@@ -1944,7 +1967,7 @@ activate_toggle_editor_event_viewer (
     !gtk_widget_get_visible (
        GTK_WIDGET (MW_EDITOR_EVENT_VIEWER));
 
-  g_settings_set_int (
+  g_settings_set_boolean (
     S_UI, "editor-event-viewer-visible",
     new_visibility);
   gtk_widget_set_visible (

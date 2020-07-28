@@ -35,6 +35,7 @@
 #include "project.h"
 #include "utils/gtk.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -53,6 +54,16 @@ static void
 link_scrolls (
   ChordEditorSpaceWidget * self)
 {
+  /* link note keys v scroll to arranger v scroll */
+  if (self->chord_keys_scroll)
+    {
+      gtk_scrolled_window_set_vadjustment (
+        self->chord_keys_scroll,
+        gtk_scrolled_window_get_vadjustment (
+          GTK_SCROLLED_WINDOW (
+            self->arranger_scroll)));
+    }
+
   /* link ruler h scroll to arranger h scroll */
   if (MW_CLIP_EDITOR_INNER->ruler_scroll)
     {
@@ -71,8 +82,36 @@ chord_editor_space_widget_update_size_group (
   ChordEditorSpaceWidget * self,
   int                     visible)
 {
-  CLIP_EDITOR_INNER_WIDGET_ADD_TO_SIZEGROUP (
-    chord_keys_box);
+  clip_editor_inner_widget_add_to_left_of_ruler_sizegroup (
+    MW_CLIP_EDITOR_INNER,
+    GTK_WIDGET (self->chord_keys_box),
+    visible);
+}
+
+static void
+on_realize (
+  GtkWidget * widget,
+  ChordEditorSpaceWidget * self)
+{
+}
+
+int
+chord_editor_space_widget_get_chord_height (
+  ChordEditorSpaceWidget * self)
+{
+  return
+    gtk_widget_get_allocated_height (
+      GTK_WIDGET (self->chord_keys[0]));
+}
+
+int
+chord_editor_space_widget_get_all_chords_height (
+  ChordEditorSpaceWidget * self)
+{
+  return
+    CHORD_EDITOR->num_chords *
+    gtk_widget_get_allocated_height (
+      GTK_WIDGET (self->chord_keys[0]));
 }
 
 void
@@ -86,12 +125,6 @@ void
 chord_editor_space_widget_setup (
   ChordEditorSpaceWidget * self)
 {
-  self->px_per_key =
-    DEFAULT_PX_PER_KEY *
-    (int) PIANO_ROLL->notes_zoom;
-  self->total_key_px =
-    self->px_per_key * CHORD_EDITOR->num_chords;
-
   if (self->arranger)
     {
       arranger_widget_setup (
@@ -134,6 +167,19 @@ chord_editor_space_widget_init (
 
   self->arranger->type =
     ARRANGER_WIDGET_TYPE_CHORD;
+
+  self->arranger_and_keys_vsize_group =
+    gtk_size_group_new (GTK_SIZE_GROUP_VERTICAL);
+  gtk_size_group_add_widget (
+    self->arranger_and_keys_vsize_group,
+    GTK_WIDGET (self->arranger));
+  gtk_size_group_add_widget (
+    self->arranger_and_keys_vsize_group,
+    GTK_WIDGET (self->chord_keys_box));
+
+  g_signal_connect (
+    G_OBJECT (self), "realize",
+    G_CALLBACK (on_realize),  self);
 }
 
 static void
@@ -145,20 +191,15 @@ chord_editor_space_widget_class_init (
     klass,
     "chord_editor_space.ui");
 
-  gtk_widget_class_bind_template_child (
-    klass,
-    ChordEditorSpaceWidget,
-    arranger_scroll);
-  gtk_widget_class_bind_template_child (
-    klass,
-    ChordEditorSpaceWidget,
-    arranger_viewport);
-  gtk_widget_class_bind_template_child (
-    klass,
-    ChordEditorSpaceWidget,
-    arranger);
-  gtk_widget_class_bind_template_child (
-    klass,
-    ChordEditorSpaceWidget,
-    chord_keys_box);
+#define BIND_CHILD(x) \
+  gtk_widget_class_bind_template_child ( \
+    klass, ChordEditorSpaceWidget, x)
+
+  BIND_CHILD (arranger_scroll);
+  BIND_CHILD (arranger_viewport);
+  BIND_CHILD (arranger);
+  BIND_CHILD (chord_keys_box);
+  BIND_CHILD (chord_keys_scroll);
+
+#undef BIND_CHILD
 }

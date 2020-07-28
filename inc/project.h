@@ -37,7 +37,6 @@
 #include "audio/quantize_options.h"
 #include "audio/region.h"
 #include "audio/region_link_group_manager.h"
-#include "audio/track.h"
 #include "audio/tracklist.h"
 #include "gui/backend/clip_editor.h"
 #include "gui/backend/automation_selections.h"
@@ -45,7 +44,6 @@
 #include "gui/backend/midi_arranger_selections.h"
 #include "gui/backend/mixer_selections.h"
 #include "gui/backend/timeline_selections.h"
-#include "gui/backend/tracklist_selections.h"
 #include "gui/backend/tool.h"
 #include "plugins/plugin.h"
 #include "zrythm.h"
@@ -54,13 +52,9 @@
 
 typedef struct Timeline Timeline;
 typedef struct Transport Transport;
-typedef struct Port Port;
-typedef struct Channel Channel;
-typedef struct Plugin Plugin;
-typedef struct Track Track;
-typedef struct ZRegion ZRegion;
-typedef struct MidiNote MidiNote;
-typedef struct Track ChordTrack;
+typedef struct Tracklist Tracklist;
+typedef struct TracklistSelections
+  TracklistSelections;
 
 /**
  * @addtogroup project Project
@@ -72,9 +66,36 @@ typedef struct Track ChordTrack;
 #define DEFAULT_PROJECT_NAME    "Untitled Project"
 #define PROJECT_FILE            "project.zpj"
 #define PROJECT_BACKUPS_DIR     "backups"
-#define PROJECT_STATES_DIR      "states"
+#define PROJECT_PLUGINS_DIR     "plugins"
+#define PROJECT_PLUGIN_STATES_DIR "states"
+#define PROJECT_PLUGIN_EXT_COPIES_DIR "ext_file_copies"
+#define PROJECT_PLUGIN_EXT_LINKS_DIR "ext_file_links"
 #define PROJECT_EXPORTS_DIR     "exports"
 #define PROJECT_POOL_DIR        "pool"
+
+typedef enum ProjectPath
+{
+  PROJECT_PATH_PROJECT_FILE,
+  PROJECT_PATH_BACKUPS,
+
+  /** Plugins path. */
+  PROJECT_PATH_PLUGINS,
+
+  /** Path for state .ttl files. */
+  PROJECT_PATH_PLUGIN_STATES,
+
+  /** External files for plugin states, under the
+   * STATES dir. */
+  PROJECT_PATH_PLUGIN_EXT_COPIES,
+
+  /** External files for plugin states, under the
+   * STATES dir. */
+  PROJECT_PATH_PLUGIN_EXT_LINKS,
+
+  PROJECT_PATH_EXPORTS,
+
+  PROJECT_PATH_POOL,
+} ProjectPath;
 
 /**
  * Selection type, used for displaying info in the
@@ -87,6 +108,20 @@ typedef enum SelectionType
   SELECTION_TYPE_EDITOR,
 } SelectionType;
 
+/**
+ * Flag to pass to project_compress() and
+ * project_decompress().
+ */
+typedef enum ProjectCompressionFlag
+{
+  PROJECT_COMPRESS_FILE,
+  PROJECT_COMPRESS_DATA,
+} ProjectCompressionFlag;
+
+#define PROJECT_DECOMPRESS_FILE \
+  PROJECT_COMPRESS_FILE
+#define PROJECT_DECOMPRESS_DATA \
+  PROJECT_COMPRESS_DATA
 
 /**
  * Contains all of the info that will be serialized
@@ -112,12 +147,12 @@ typedef struct Project
    */
   char *             backup_dir;
 
-  UndoManager        undo_manager;
+  UndoManager *      undo_manager;
 
-  Tracklist          tracklist;
+  Tracklist *        tracklist;
 
   /** Backend for the widget. */
-  ClipEditor         clip_editor;
+  ClipEditor *       clip_editor;
 
   /** Snap/Grid info for the timeline. */
   SnapGrid           snap_grid_timeline;
@@ -156,7 +191,7 @@ typedef struct Project
   /**
    * Selected Track's.
    */
-  TracklistSelections tracklist_selections;
+  TracklistSelections * tracklist_selections;
 
   /**
    * Plugin selections in the Mixer.
@@ -167,33 +202,13 @@ typedef struct Project
   double             timeline_zoom;
   double             piano_roll_zoom;
 
-  /* ---------------------- */
-  /** FIXME move the range stuff to Transport. */
-
-  /**
-   * Selected range.
-   *
-   * This is 2 points instead of start/end because
-   * the 2nd point can be dragged past the 1st
-   * point so the order gets swapped.
-   *
-   * Should be compared each time to see which one
-   * is first.
-   */
-  Position           range_1;
-  Position           range_2;
-
-  /** Whether range should be displayed or not. */
-  int                has_range;
-  /* ---------------------- */
-
   /** Manager for region link groups. */
   RegionLinkGroupManager region_link_group_manager;
 
   /**
    * The audio backend
    */
-  AudioEngine        audio_engine;
+  AudioEngine *     audio_engine;
 
   /** MIDI bindings. */
   MidiMappings *    midi_mappings;
@@ -202,7 +217,17 @@ typedef struct Project
    * Currently selected tool (select - normal,
    * select - stretch, edit, delete, ramp, audition)
    */
-  Tool               tool;
+  Tool              tool;
+
+  /**
+   * Whether the current is currently being loaded
+   * from a backup file.
+   *
+   * This is useful when instantiating plugins from
+   * state and should be set to false after the
+   * project is loaded.
+   */
+  bool              loading_from_backup;
 
   /**
    * If a project is currently loaded or not.
@@ -211,7 +236,7 @@ typedef struct Project
    * tear down when loading a new project while
    * another one is loaded.
    */
-  int               loaded;
+  bool              loaded;
 
   /**
    * The last thing selected in the GUI.
@@ -229,81 +254,55 @@ typedef struct Project
 static const cyaml_schema_field_t
   project_fields_schema[] =
 {
-  CYAML_FIELD_STRING_PTR (
-    "title", CYAML_FLAG_POINTER,
-    Project, title,
-    0, CYAML_UNLIMITED),
-  CYAML_FIELD_STRING_PTR (
-    "datetime_str", CYAML_FLAG_POINTER,
-    Project, datetime_str,
-    0, CYAML_UNLIMITED),
-  CYAML_FIELD_STRING_PTR (
-    "version", CYAML_FLAG_POINTER,
-    Project, version,
-    0, CYAML_UNLIMITED),
-  CYAML_FIELD_MAPPING (
-    "tracklist", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_STRING_PTR (
+    Project, title),
+  YAML_FIELD_STRING_PTR (
+    Project, datetime_str),
+  YAML_FIELD_STRING_PTR (
+    Project, version),
+  YAML_FIELD_MAPPING_PTR (
     Project, tracklist, tracklist_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "clip_editor", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_PTR (
     Project, clip_editor, clip_editor_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "snap_grid_timeline", CYAML_FLAG_DEFAULT,
-    Project, snap_grid_timeline, snap_grid_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "quantize_opts_timeline", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
+    Project, snap_grid_timeline,
+    snap_grid_fields_schema),
+  YAML_FIELD_MAPPING_EMBEDDED (
     Project, quantize_opts_timeline,
     quantize_options_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "audio_engine", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_PTR (
     Project, audio_engine, engine_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "snap_grid_midi", CYAML_FLAG_DEFAULT,
-    Project, snap_grid_midi, snap_grid_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "quantize_opts_editor", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
+    Project, snap_grid_midi,
+    snap_grid_fields_schema),
+  YAML_FIELD_MAPPING_EMBEDDED (
     Project, quantize_opts_editor,
     quantize_options_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "mixer_selections", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Project, mixer_selections,
     mixer_selections_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "timeline_selections", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Project, timeline_selections,
     timeline_selections_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "midi_arranger_selections", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Project, midi_arranger_selections,
     midi_arranger_selections_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "chord_selections", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Project, chord_selections,
     chord_selections_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "automation_selections", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Project, automation_selections,
     automation_selections_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "tracklist_selections", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_PTR (
     Project, tracklist_selections,
     tracklist_selections_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "range_1", CYAML_FLAG_DEFAULT,
-    Project, range_1, position_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "range_2", CYAML_FLAG_DEFAULT,
-    Project, range_2, position_fields_schema),
-  CYAML_FIELD_INT (
-    "has_range", CYAML_FLAG_DEFAULT,
-    Project, has_range),
   YAML_FIELD_MAPPING_EMBEDDED (
     Project, region_link_group_manager,
     region_link_group_manager_fields_schema),
   YAML_FIELD_MAPPING_PTR (
     Project, midi_mappings,
     midi_mappings_fields_schema),
-  YAML_FIELD_MAPPING_EMBEDDED (
+  YAML_FIELD_MAPPING_PTR (
     Project, undo_manager,
     undo_manager_fields_schema),
 
@@ -354,8 +353,8 @@ int
 project_save (
   Project *    self,
   const char * _dir,
-  const int    is_backup,
-  const int    show_notification,
+  const bool   is_backup,
+  const bool   show_notification,
   const bool   async);
 
 /**
@@ -372,48 +371,17 @@ project_autosave_cb (
   void * data);
 
 /**
- * Returns the backups dir for the given Project.
- */
-char *
-project_get_backups_dir (
-  Project * self);
-
-/**
- * Returns the exports dir for the given Project.
- */
-char *
-project_get_exports_dir (
-  Project * self);
-
-/**
- * Returns the states dir for the given Project.
+ * Returns the requested project path as a newly
+ * allocated string.
  *
- * @param is_backup 1 to get the states dir of the
+ * @param backup Whether to get the path for the
  *   current backup instead of the main project.
  */
 char *
-project_get_states_dir (
-  Project * self,
-  const int is_backup);
-
-/**
- * Returns the pool dir for the given Project.
- */
-char *
-project_get_pool_dir (
-  Project * self);
-
-/**
- * Returns the full project file (project.yml)
- * path.
- *
- * @param is_backup 1 to get the project file of the
- *   current backup instead of the main project.
- */
-char *
-project_get_project_file_path (
-  Project * self,
-  const int is_backup);
+project_get_path (
+  Project *     self,
+  ProjectPath   path,
+  bool          backup);
 
 /**
  * Initializes the selections in the project.
@@ -426,16 +394,49 @@ void
 project_init_selections (Project * self);
 
 /**
- * Sets if the project has range and updates UI.
+ * Compresses/decompress a project from a file/data
+ * to a file/data.
+ *
+ * @param compress True to compress, false to
+ *   decompress.
+ * @param[out] dest Pointer to a location to allocate
+ *   memory.
+ * @param[out] dest_size Pointer to a location to
+ *   store the size of the allocated memory.
+ * @param src Input buffer or filepath.
+ * @param src_size Input buffer size, if not
+ *   filepath.
+ *
+ * @return Error message if error, otherwise NULL.
  */
-void
-project_set_has_range (int has_range);
+char *
+_project_compress (
+  bool                   compress,
+  char **                dest,
+  size_t *               dest_size,
+  ProjectCompressionFlag dest_type,
+  const char *           src,
+  const size_t           src_size,
+  ProjectCompressionFlag src_type);
+
+#define project_compress(a,b,c,d,e,f) \
+  _project_compress (true, a, b, c, d, e, f)
+
+#define project_decompress(a,b,c,d,e,f) \
+  _project_compress (false, a, b, c, d, e, f)
+
+/**
+ * Creates an empty project object.
+ */
+Project *
+project_new (
+  Zrythm * zrythm);
 
 /**
  * Tears down the project.
  */
 void
-project_tear_down (Project * self);
+project_free (Project * self);
 
 SERIALIZE_INC (Project, project)
 DESERIALIZE_INC (Project, project)

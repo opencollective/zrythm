@@ -19,13 +19,23 @@
 
 #include "actions/copy_plugins_action.h"
 #include "audio/channel.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
 #include "project.h"
 #include "utils/flags.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
+
+void
+copy_plugins_action_init_loaded (
+  CopyPluginsAction * self)
+{
+  mixer_selections_init_loaded (self->ms, false);
+}
 
 /**
  * Create a new CopyPluginsAction.
@@ -49,7 +59,9 @@ copy_plugins_action_new (
     UA_COPY_PLUGINS;
 
   self->slot_type = slot_type;
-  self->ms = mixer_selections_clone (ms);
+  self->ms =
+    mixer_selections_clone (
+      ms, ms == MIXER_SELECTIONS);
   self->slot = slot;
 
   if (tr)
@@ -129,7 +141,8 @@ copy_plugins_action_do (
   for (int i = 0; i < self->ms->num_slots; i++)
     {
       /* clone the clone */
-      pl = plugin_clone (self->ms->plugins[i]);
+      pl =
+        plugin_clone (self->ms->plugins[i], false);
 
       /* add it to the channel */
       int new_slot = self->slot + i;
@@ -203,7 +216,7 @@ copy_plugins_action_do (
         }
     }
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   EVENTS_PUSH (ET_CHANNEL_SLOTS_CHANGED, ch);
 
@@ -259,7 +272,7 @@ copy_plugins_action_undo (
 
   EVENTS_PUSH (ET_CHANNEL_SLOTS_CHANGED, ch);
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   return 0;
 }

@@ -89,7 +89,10 @@
 #define F_WITHOUT_LANE 0
 
 #define F_CONNECT 1
-#define F_DISCONNECT 0
+#define F_NO_CONNECT 0
+
+#define F_DISCONNECT 1
+#define F_NO_DISCONNECT 0
 
 #define F_GLOBAL 1
 #define F_NOT_GLOBAL 0
@@ -129,5 +132,26 @@
 
 #define F_HAS_PADDING 1
 #define F_NO_HAS_PADDING 0
+
+#define F_NORMALIZED 1
+#define F_NOT_NORMALIZED 0
+
+#define F_USE_COLOR 1
+#define F_NO_USE_COLOR 0
+
+#define F_EXCLUSIVE 1
+#define F_NOT_EXCLUSIVE 0
+
+#define F_BACKUP 1
+#define F_NOT_BACKUP 0
+
+#define F_ACTIVATE 1
+#define F_NO_ACTIVATE 0
+
+#define F_TRIGGER_UNDO 1
+#define F_NO_TRIGGER_UNDO 0
+
+#define F_SOFT 1
+#define F_NOT_SOFT 0
 
 #endif

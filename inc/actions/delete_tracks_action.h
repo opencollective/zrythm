@@ -17,8 +17,8 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __UNDO_DELETE_TRACKS_ACTION_H__
-#define __UNDO_DELETE_TRACKS_ACTION_H__
+#ifndef __ACTION_DELETE_TRACKS_ACTION_H__
+#define __ACTION_DELETE_TRACKS_ACTION_H__
 
 #include "actions/undoable_action.h"
 #include "gui/backend/tracklist_selections.h"
@@ -38,6 +38,12 @@ typedef struct DeleteTracksAction
 {
   UndoableAction  parent_instance;
 
+  /** Source sends that need to be deleted/
+   * recreated on do/undo. */
+  ChannelSend *   src_sends;
+  int             num_src_sends;
+  int             src_sends_size;
+
   /** Clone of the TracklistSelections to delete. */
   TracklistSelections * tls;
 } DeleteTracksAction;
@@ -53,6 +59,9 @@ static const cyaml_schema_field_t
     "tls", CYAML_FLAG_POINTER,
     DeleteTracksAction, tls,
     tracklist_selections_fields_schema),
+  YAML_FIELD_DYN_ARRAY_VAR_COUNT (
+    DeleteTracksAction, src_sends,
+    channel_send_schema),
 
   CYAML_FIELD_END
 };
@@ -65,25 +74,29 @@ static const cyaml_schema_value_t
     delete_tracks_action_fields_schema),
 };
 
+void
+delete_tracks_action_init_loaded (
+  DeleteTracksAction * self);
+
 UndoableAction *
 delete_tracks_action_new (
   TracklistSelections * tls);
 
 int
 delete_tracks_action_do (
-	DeleteTracksAction * self);
+  DeleteTracksAction * self);
 
 int
 delete_tracks_action_undo (
-	DeleteTracksAction * self);
+  DeleteTracksAction * self);
 
 char *
 delete_tracks_action_stringize (
-	DeleteTracksAction * self);
+  DeleteTracksAction * self);
 
 void
 delete_tracks_action_free (
-	DeleteTracksAction * self);
+  DeleteTracksAction * self);
 
 /**
  * @}

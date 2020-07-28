@@ -17,13 +17,15 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_CARLA
 
 #include <stdlib.h>
 
+#include "plugins/lv2_plugin.h"
 #include "plugins/plugin_descriptor.h"
+#include "plugins/plugin_manager.h"
 #include "plugins/carla/carla_discovery.h"
 #include "utils/file.h"
 #include "utils/string.h"
@@ -160,7 +162,7 @@ z_carla_discovery_parse_plugin_info (
   if (error)
     {
       g_free (error);
-      g_warning (
+      g_message (
         "error found for %s: %s",
         plugin_path, results);
       g_free (results);
@@ -168,7 +170,7 @@ z_carla_discovery_parse_plugin_info (
     }
   else if (string_is_equal ("", results, false))
     {
-      g_warning (
+      g_message (
         "No results returned for %s",
         plugin_path);
       g_free (results);
@@ -181,7 +183,13 @@ z_carla_discovery_parse_plugin_info (
     string_get_regex_group (
       results,
       "carla-discovery::name::(.*)" LINE_SEP, 1);
-  g_return_val_if_fail (descr->name,  NULL);
+  if (!descr->name)
+    {
+      g_warning (
+        "Failed to get plugin name for %s. "
+        "skipping...", plugin_path);
+      return NULL;
+    }
   descr->author =
     string_get_regex_group (
       results,
@@ -329,6 +337,84 @@ z_carla_discovery_run (
     system_get_cmd_output (argv, 1200, true);
 
   return results;
+}
+
+CarlaBridgeMode
+z_carla_discovery_get_bridge_mode (
+  const PluginDescriptor * descr)
+{
+  if (descr->protocol == PROT_LV2)
+    {
+      /* TODO if the UI and DSP binary is the same
+       * file, bridge the whole plugin */
+      LilvNode * lv2_uri =
+        lilv_new_uri (LILV_WORLD, descr->uri);
+      const LilvPlugin * lilv_plugin =
+        lilv_plugins_get_by_uri (
+          PM_LILV_NODES.lilv_plugins,
+          lv2_uri);
+      lilv_node_free (lv2_uri);
+      LilvUIs * uis =
+        lilv_plugin_get_uis (lilv_plugin);
+      const LilvUI * picked_ui;
+      const LilvNode * picked_ui_type;
+      bool needs_bridging =
+        lv2_plugin_pick_ui (
+          uis, LV2_PLUGIN_UI_FOR_BRIDGING,
+          &picked_ui, &picked_ui_type);
+      if (needs_bridging)
+        {
+          const LilvNode * ui_uri =
+            lilv_ui_get_uri (picked_ui);
+          LilvNodes * ui_required_features =
+            lilv_world_find_nodes (
+              LILV_WORLD, ui_uri,
+              PM_LILV_NODES.core_requiredFeature,
+              NULL);
+          if (lilv_nodes_contains (
+                ui_required_features,
+                PM_LILV_NODES.data_access) ||
+              lilv_nodes_contains (
+                ui_required_features,
+                PM_LILV_NODES.instance_access) ||
+              lilv_node_equals (
+                picked_ui_type,
+                PM_LILV_NODES.ui_Qt4UI) ||
+              lilv_node_equals (
+                picked_ui_type,
+                PM_LILV_NODES.ui_Qt5UI) ||
+              lilv_node_equals (
+                picked_ui_type,
+                PM_LILV_NODES.ui_GtkUI) ||
+              lilv_node_equals (
+                picked_ui_type,
+                PM_LILV_NODES.ui_Gtk3UI)
+              )
+            {
+              return CARLA_BRIDGE_FULL;
+            }
+          else
+            {
+              return CARLA_BRIDGE_UI;
+            }
+          lilv_nodes_free (ui_required_features);
+        }
+      else /* does not need bridging */
+        {
+          return CARLA_BRIDGE_NONE;
+        }
+      lilv_uis_free (uis);
+    }
+  else if (descr->arch == ARCH_32)
+    {
+      return CARLA_BRIDGE_FULL;
+    }
+  else
+    {
+      return CARLA_BRIDGE_NONE;
+    }
+
+  g_return_val_if_reached (CARLA_BRIDGE_NONE);
 }
 
 #ifdef __APPLE__

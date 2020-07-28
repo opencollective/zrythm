@@ -26,10 +26,11 @@
 #include "audio/channel.h"
 #include "audio/chord_track.h"
 #include "audio/instrument_track.h"
-#include "audio/mixer.h"
 #include "audio/scale.h"
 #include "audio/track.h"
 #include "audio/tracklist.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/bot_dock_edge.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/channel.h"
@@ -44,7 +45,9 @@
 #include "utils/arrays.h"
 #include "utils/flags.h"
 #include "utils/gtk.h"
+#include "utils/symap.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 G_DEFINE_TYPE (
   TracklistWidget, tracklist_widget, GTK_TYPE_BOX)
@@ -286,7 +289,7 @@ on_size_allocate (
   GdkRectangle *    allocation,
   TracklistWidget * self)
 {
-  if (!TRACKLIST)
+  if (!PROJECT || !TRACKLIST)
     return;
 
   EVENTS_PUSH (
@@ -422,7 +425,8 @@ tracklist_widget_setup (
   TracklistWidget * self,
   Tracklist * tracklist)
 {
-  g_warn_if_fail (tracklist);
+  g_return_if_fail (tracklist);
+
   self->tracklist = tracklist;
   tracklist->widget = self;
 
@@ -447,6 +451,30 @@ tracklist_widget_setup (
     self->unpinned_size_group,
     GTK_WIDGET (
       MW_TIMELINE_PANEL->timeline));
+
+  self->setup = true;
+}
+
+/**
+ * Prepare for finalization.
+ */
+void
+tracklist_widget_tear_down (
+  TracklistWidget * self)
+{
+  g_message ("tearing down %p...", self);
+
+  if (self->setup)
+    {
+      g_object_unref (self->pinned_box);
+      g_object_unref (self->unpinned_scroll);
+      g_object_unref (self->unpinned_box);
+      g_object_unref (self->ddbox);
+
+      self->setup = false;
+    }
+
+  g_message ("done");
 }
 
 static void
@@ -554,7 +582,8 @@ tracklist_widget_init (TracklistWidget * self)
 }
 
 static void
-tracklist_widget_class_init (TracklistWidgetClass * _klass)
+tracklist_widget_class_init (
+  TracklistWidgetClass * _klass)
 {
   GtkWidgetClass * klass =
     GTK_WIDGET_CLASS (_klass);

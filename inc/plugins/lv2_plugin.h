@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2018-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -43,7 +43,7 @@
 #ifndef __PLUGINS_LV2_PLUGIN_H__
 #define __PLUGINS_LV2_PLUGIN_H__
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,6 +94,10 @@ typedef struct PluginDescriptor PluginDescriptor;
  * @{
  */
 
+#define LV2_PLUGIN_MAGIC 58173672
+#define IS_LV2_PLUGIN(tr) \
+  (tr && tr->magic == LV2_PLUGIN_MAGIC)
+
 /**
  * LV2 plugin.
  */
@@ -103,7 +107,8 @@ typedef struct Lv2Plugin
 
   LV2_Feature        map_feature;
   LV2_Feature        unmap_feature;
-  LV2_Feature        make_path_feature;
+  LV2_Feature        make_path_feature_save;
+  LV2_Feature        make_path_feature_temp;
   LV2_Feature        sched_feature;
   LV2_Feature        state_sched_feature;
   LV2_Feature        safe_restore_feature;
@@ -116,6 +121,9 @@ typedef struct Lv2Plugin
 
   const LV2_Feature* features[11];
 
+  /** These are the features that are passed to
+   * state extension calls, such as when saving
+   * the state. */
   const LV2_Feature* state_features[8];
 
   LV2_Options_Option options[6];
@@ -143,14 +151,8 @@ typedef struct Lv2Plugin
   ZixSem             work_lock;
   /** Exit semaphore. */
   ZixSem*            done;
-  /** Temporary plugin state directory. */
-  char*              temp_dir;
-  /** Plugin save directory. */
-  char*              save_dir;
   /** Plugin class (RDF data). */
   const LilvPlugin*  lilv_plugin;
-  /** Temporary storage. */
-  LilvState *        state;
   /** Current preset. */
   LilvState*         preset;
   /** All plugin UIs (RDF data). */
@@ -166,15 +168,20 @@ typedef struct Lv2Plugin
   /** Plugin UI instance (shared library). */
   SuilInstance*      ui_instance;
 
+  /**
+   * Temporary plugin state directory (absolute
+   * path).
+   *
+   * This is created at runtime and remembered.
+   */
+  char *             temp_dir;
+
   /** Port array of size num_ports. */
   Lv2Port*          ports;
   int                num_ports;
 
   /** Available Lv2Plugin controls. */
   Lv2Controls        controls;
-
-  /** Latency reported by the Lv2Plugin, if any. */
-  uint32_t           plugin_latency;
 
   /** Frames since last update sent to UI. */
   uint32_t           event_delta_t;
@@ -186,13 +193,15 @@ typedef struct Lv2Plugin
 
   /** Whether a plugin update is needed. */
   bool               request_update;
-  bool               safe_restore;   ///< Plugin restore() is thread-safe
+
+  /** Whether plugin restore() is thread-safe. */
+  bool               safe_restore;
   int                control_in;     ///< Index of control input port
   ZixSem exit_sem;  /**< Exit semaphore */
 
   /** Whether the plugin has at least 1 atom port
    * that supports position. */
-  int                want_position;
+  bool               want_position;
 
   /** Whether the plugin has an external UI. */
   bool               has_external_ui;
@@ -224,14 +233,17 @@ typedef struct Lv2Plugin
   /** Base Plugin instance (parent). */
   Plugin *           plugin;
 
-  /** For saving/loading the state. */
-  char *             state_file;
+  /* ---- plugin feature data ---- */
 
-  /** plugin feature data */
-  LV2_State_Make_Path make_path;
+  /** Make path feature data. */
+  LV2_State_Make_Path make_path_save;
+  LV2_State_Make_Path make_path_temp;
+
   LV2_Worker_Schedule sched;
   LV2_Worker_Schedule ssched;
   LV2_Log_Log         llog;
+
+  int                 magic;
 
 } Lv2Plugin;
 
@@ -242,8 +254,6 @@ static const cyaml_schema_field_t
     "ports", CYAML_FLAG_POINTER,
     Lv2Plugin, ports, num_ports,
     &lv2_port_schema, 0, CYAML_UNLIMITED),
-  YAML_FIELD_STRING_PTR_OPTIONAL (
-    Lv2Plugin, state_file),
 
   CYAML_FIELD_END
 };
@@ -257,7 +267,8 @@ static const cyaml_schema_value_t
 
 void
 lv2_plugin_init_loaded (
-  Lv2Plugin * lv2_plgn);
+  Lv2Plugin * self,
+  bool        project);
 
 /**
  * Returns a newly allocated plugin descriptor for
@@ -298,12 +309,23 @@ lv2_plugin_has_custom_ui (
  * uri should be the state file path.
  *
  * @param self Plugin to instantiate.
+ * @param use_state_file Whether to use the plugin's
+ *   state file to instantiate the plugin.
  * @param preset_uri URI of preset to load.
+ * @param state State to load, if loading from
+ *   a state. This is used when cloning plugins
+ *   for example. The state of the original plugin
+ *   is passed here.
+ *
+ * @return 0 if OK, non-zero if error.
  */
 int
 lv2_plugin_instantiate (
-  Lv2Plugin *  plugin,
-  char * preset_uri);
+  Lv2Plugin *  self,
+  bool         project,
+  bool         use_state_file,
+  char *       preset_uri,
+  LilvState *  state);
 
 /**
  * Creates a new LV2 plugin using the given Plugin
@@ -375,29 +397,29 @@ bool
 lv2_plugin_ui_type_is_external (
   const LilvNode * ui_type);
 
-/**
- * Saves the current state in given dir.
- *
- * Used when saving the project.
- */
-int
-lv2_plugin_save_state_to_file (
-  Lv2Plugin * lv2_plugin,
-  const char * dir);
-
 Lv2Control*
 lv2_plugin_get_control_by_symbol (
   Lv2Plugin * plugin,
   const char* sym);
 
 /**
- * Saves the current state to a string (returned).
+ * Function to get a port value.
  *
- * MUST be free'd by caller.
+ * Used when saving the state.
+ * This function MUST set size and type
+ * appropriately.
  */
-int
-lv2_plugin_save_state_to_str (
-  Lv2Plugin * lv2_plugin);
+const void *
+lv2_plugin_get_port_value (
+  const char * port_sym,
+  void       * user_data,
+  uint32_t   * size,
+  uint32_t   * type);
+
+char *
+lv2_plugin_get_abs_state_file_path (
+  Lv2Plugin * self,
+  bool        is_backup);
 
 /**
  * Updates theh PortIdentifier's in the Lv2Plugin.
@@ -413,7 +435,7 @@ void
 lv2_plugin_allocate_port_buffers (
   Lv2Plugin* plugin);
 
-void
+int
 lv2_plugin_activate (
   Lv2Plugin * self,
   bool        activate);
@@ -423,6 +445,10 @@ lv2_plugin_activate (
  */
 void
 lv2_plugin_populate_banks (
+  Lv2Plugin * self);
+
+int
+lv2_plugin_cleanup (
   Lv2Plugin * self);
 
 /**

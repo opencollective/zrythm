@@ -47,6 +47,20 @@ sample_t
 math_get_amp_val_from_fader (
   sample_t fader);
 
+sample_t
+math_calculate_rms_amp (
+  sample_t *      buf,
+  const nframes_t nframes);
+
+/**
+ * Gets the digital peak of the given signal as
+ * amplitude (0-2).
+ */
+sample_t
+math_calculate_max_amp (
+  sample_t *      buf,
+  const nframes_t nframes);
+
 /**
  * Calculate db using RMS method.
  *
@@ -79,6 +93,18 @@ math_dbfs_to_amp (
 }
 
 /**
+ * Convert form dbFS to fader val 0.0 to 1.0.
+ */
+static inline sample_t
+math_dbfs_to_fader_val (
+  sample_t dbfs)
+{
+  return
+    math_get_fader_val_from_amp (
+      math_dbfs_to_amp (dbfs));
+}
+
+/**
  * Checks if 2 doubles are equal.
  *
  * @param epsilon The allowed difference.
@@ -103,13 +129,16 @@ math_dbfs_to_amp (
  * Rounds a double to an int.
  */
 #define math_round_double_to_type(x,type) \
-  ((type) (x + 0.5 - (x < 0.0)))
+  ((type) ((x) + 0.5 - ((x) < 0.0)))
 
 /**
  * Rounds a double to an int.
  */
 #define math_round_double_to_int(x) \
-  math_round_double_to_type (x,int)
+  math_round_double_to_type (x, int)
+
+#define math_round_double_to_uint(x) \
+  math_round_double_to_type (x, unsigned int)
 
 /**
  * Rounds a double to a size_t.

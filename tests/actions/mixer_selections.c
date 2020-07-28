@@ -17,6 +17,8 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-test-config.h"
+
 #include "actions/arranger_selections.h"
 #include "actions/create_tracks_action.h"
 #include "actions/copy_plugins_action.h"
@@ -29,6 +31,8 @@
 #include "audio/master_track.h"
 #include "audio/midi_note.h"
 #include "audio/region.h"
+#include "audio/tempo_track.h"
+#include "plugins/plugin_manager.h"
 #include "project.h"
 #include "utils/flags.h"
 #include "zrythm.h"
@@ -37,8 +41,8 @@
 
 #include <glib.h>
 
-#define TRACK_POS 3
-#define NEW_TRACK_POS 4
+#define TRACK_POS 4
+#define NEW_TRACK_POS 5
 
 static Position start_pos, end_pos, ap1_pos, ap2_pos;
 
@@ -49,6 +53,8 @@ typedef enum TestPluginType
 } TestPluginType;
 
 static TestPluginType pl_type;
+
+static bool bundle_loaded = false;
 
 /**
  * Bootstraps the test with test data.
@@ -75,23 +81,26 @@ rebootstrap (
     TESTS_BUILDDIR, plugin_dir);
   g_message ("path is %s", path_str);
 
-  plugin_manager_init (PLUGIN_MANAGER);
-  LilvNode * path =
-    lilv_new_uri (LILV_WORLD, path_str);
-  lilv_world_load_bundle (
-    LILV_WORLD, path);
-  lilv_node_free (path);
-
-  plugin_manager_scan_plugins (
-    PLUGIN_MANAGER, 1.0, NULL);
-  g_assert_cmpint (
-    PLUGIN_MANAGER->num_plugins, ==, 1);
+  if (!bundle_loaded)
+    {
+      LilvNode * path =
+        lilv_new_uri (LILV_WORLD, path_str);
+      lilv_world_load_bundle (
+        LILV_WORLD, path);
+      lilv_node_free (path);
+      bundle_loaded = true;
+      plugin_manager_scan_plugins (
+        PLUGIN_MANAGER, 1.0, NULL);
+      g_assert_cmpint (
+        PLUGIN_MANAGER->num_plugins, ==, 1);
+    }
 
   /* remove any previous work */
   chord_track_clear (P_CHORD_TRACK);
   marker_track_clear (P_MARKER_TRACK);
+  tempo_track_clear (P_MARKER_TRACK);
   for (int i = TRACKLIST->num_tracks - 1;
-       i >= 3; i--)
+       i >= 4; i--)
     {
       Track * track = TRACKLIST->tracks[i];
       tracklist_remove_track (
@@ -103,13 +112,13 @@ rebootstrap (
 static void
 check_initial_state ()
 {
-  g_assert_cmpint (TRACKLIST->num_tracks, ==, 3);
+  g_assert_cmpint (TRACKLIST->num_tracks, ==, 4);
 }
 
 static void
 check_after_step1 ()
 {
-  g_assert_cmpint (TRACKLIST->num_tracks, ==, 4);
+  g_assert_cmpint (TRACKLIST->num_tracks, ==, 5);
 
   /* check identifiers */
   Track * track = TRACKLIST->tracks[TRACK_POS];
@@ -220,7 +229,7 @@ check_after_step5 ()
 
   /* check that new track is created and the
    * identifiers are correct */
-  g_assert_cmpint (TRACKLIST->num_tracks, ==, 5);
+  g_assert_cmpint (TRACKLIST->num_tracks, ==, 6);
   g_assert_nonnull (new_track);
   g_assert_true (
     new_track->type == TRACK_TYPE_INSTRUMENT ||
@@ -230,14 +239,15 @@ check_after_step5 ()
   g_assert_nonnull (new_pl);
   g_assert_null (new_ch->inserts[0]);
   Plugin * pl = ch->inserts[0];
-  g_assert_cmpint (pl->id.track_pos, ==, 3);
+  g_assert_cmpint (pl->id.track_pos, ==, TRACK_POS);
   g_assert_cmpint (pl->id.slot, ==, 0);
-  g_assert_cmpint (new_pl->id.track_pos, ==, 4);
+  g_assert_cmpint (
+    new_pl->id.track_pos, ==, NEW_TRACK_POS);
   g_assert_cmpint (new_pl->id.slot, ==, 1);
   g_assert_cmpint (
     MIXER_SELECTIONS->num_slots, ==, 1);
   g_assert_cmpint (
-    MIXER_SELECTIONS->track_pos, ==, 4);
+    MIXER_SELECTIONS->track_pos, ==, NEW_TRACK_POS);
   g_assert_cmpint (
     MIXER_SELECTIONS->slots[0], ==, 1);
 
@@ -268,13 +278,13 @@ check_after_step6 ()
   /* check that there are 2 plugins in the track
    * now (slot 1 and 2) */
   g_assert_cmpint (
-    MIXER_SELECTIONS->track_pos, ==, 4);
+    MIXER_SELECTIONS->track_pos, ==, NEW_TRACK_POS);
   g_assert_cmpint (
     MIXER_SELECTIONS->slots[0], ==, 2);
   g_assert_nonnull (new_ch->inserts[2]);
   Plugin * slot2_plugin = new_ch->inserts[2];
   g_assert_cmpint (
-    slot2_plugin->id.track_pos, ==, 4);
+    slot2_plugin->id.track_pos, ==, NEW_TRACK_POS);
   g_assert_cmpint (slot2_plugin->id.slot, ==, 2);
 
   /* check that the automation was copied too */
@@ -452,12 +462,12 @@ test_move_plugins ()
     create_tracks_action_new (
       TRACK_TYPE_AUDIO_BUS,
       PLUGIN_MANAGER->plugin_descriptors[0], NULL,
-      3, 1);
+      TRACK_POS, NULL, 1);
   undo_manager_perform (UNDO_MANAGER, action);
 
   /* check if track is selected */
   Track * track = TRACKLIST->tracks[TRACK_POS];
-  g_assert_cmpint (track->pos, ==, 3);
+  g_assert_cmpint (track->pos, ==, TRACK_POS);
   g_assert_nonnull (track);
   g_assert_true (
     tracklist_selections_contains_track (

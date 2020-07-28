@@ -17,14 +17,14 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef _WOE32
 
 #ifndef __AUDIO_ENGINE_WINDOWS_MME_H__
 #define __AUDIO_ENGINE_WINDOWS_MME_H__
 
-#include <Windows.h>
+#include <windows.h>
 
 #include <gtk/gtk.h>
 
@@ -69,15 +69,15 @@ engine_windows_mme_print_error (
  */
 int
 engine_windows_mme_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 /**
  * Starts all previously scanned devices.
  */
 int
-engine_windows_mme_start_known_devices (
-  AudioEngine * self);
+engine_windows_mme_activate (
+  AudioEngine * self,
+  bool          activate);
 
 /**
  * Rescans for MIDI devices, opens them and keeps

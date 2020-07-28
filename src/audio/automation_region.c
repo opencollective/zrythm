@@ -24,7 +24,8 @@
 #include "audio/position.h"
 #include "audio/region.h"
 #include "gui/backend/automation_selections.h"
-#include "gui/backend/events.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/automation_arranger.h"
 #include "gui/widgets/automation_editor_space.h"
 #include "gui/widgets/bot_dock_edge.h"
@@ -34,7 +35,9 @@
 #include "project.h"
 #include "utils/arrays.h"
 #include "utils/flags.h"
+#include "utils/object_utils.h"
 #include "utils/objects.h"
+#include "zrythm_app.h"
 
 int
 automation_region_sort_func (
@@ -253,7 +256,7 @@ automation_region_get_next_ap (
  */
 void
 automation_region_remove_ap (
-  ZRegion *          self,
+  ZRegion *         self,
   AutomationPoint * ap,
   int               free)
 {
@@ -266,7 +269,10 @@ automation_region_remove_ap (
     self->aps, self->num_aps, ap);
 
   if (free)
-    free_later (ap, arranger_object_free);
+    {
+      arranger_object_free (
+        (ArrangerObject *) ap);
+    }
 
   EVENTS_PUSH (
     ET_ARRANGER_OBJECT_REMOVED,

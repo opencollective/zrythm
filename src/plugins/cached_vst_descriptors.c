@@ -19,10 +19,11 @@
 
 #include "plugins/cached_vst_descriptors.h"
 #include "utils/file.h"
+#include "utils/objects.h"
 #include "utils/string.h"
 #include "zrythm.h"
 
-#define CACHED_VST_DESCRIPTORS_VERSION 3
+#define CACHED_VST_DESCRIPTORS_VERSION 6
 
 static char *
 get_cached_vst_descriptors_file_path (void)
@@ -282,7 +283,27 @@ cached_vst_descriptors_clear (
     {
       plugin_descriptor_free (self->descriptors[i]);
     }
+  self->num_descriptors = 0;
+
   delete_file ();
+}
+
+void
+cached_vst_descriptors_free (
+  CachedVstDescriptors * self)
+{
+  for (int i = 0; i < self->num_descriptors; i++)
+    {
+      object_free_w_func_and_null (
+        plugin_descriptor_free,
+        self->descriptors[i]);
+    }
+  for (int i = 0; i < self->num_blacklisted; i++)
+    {
+      object_free_w_func_and_null (
+        plugin_descriptor_free,
+        self->blacklisted[i]);
+    }
 }
 
 SERIALIZE_SRC (

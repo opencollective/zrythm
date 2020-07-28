@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include "audio/audio_region.h"
 #include "audio/engine.h"
@@ -26,6 +26,8 @@
 #include "audio/midi.h"
 #include "audio/transport.h"
 #include "project.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/arranger.h"
 #include "gui/widgets/arranger_playhead.h"
 #include "gui/widgets/bot_dock_edge.h"
@@ -38,76 +40,18 @@
 #include "gui/widgets/timeline_arranger.h"
 #include "gui/widgets/timeline_ruler.h"
 #include "gui/widgets/top_bar.h"
+#include "settings/settings.h"
 #include "utils/flags.h"
 #include "utils/math.h"
+#include "utils/objects.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
-/**
- * Sets BPM and does any necessary processing (like
- * notifying interested parties).
- */
-void
-transport_set_bpm (
-  Transport * self,
-  bpm_t       bpm)
+static void
+init_common (
+  Transport * self)
 {
-  if (bpm < TRANSPORT_MIN_BPM)
-    bpm = TRANSPORT_MIN_BPM;
-  else if (bpm > TRANSPORT_MAX_BPM)
-    bpm = TRANSPORT_MAX_BPM;
-  self->prev_bpm = self->bpm;
-  self->bpm = bpm;
-
-  engine_update_frames_per_tick (
-    AUDIO_ENGINE, self->beats_per_bar,
-    bpm, AUDIO_ENGINE->sample_rate);
-
-  /* kick off offline resampling */
-  EVENTS_PUSH (ET_BPM_CHANGED, NULL);
-}
-
-/**
- * Initialize transport
- */
-void
-transport_init (
-  Transport * self,
-  int         loading)
-{
-  g_message ("Initializing transport");
-
-  if (loading)
-    {
-      transport_set_beat_unit (
-        self, self->beat_unit);
-    }
-  else
-    {
-      // set inital total number of beats
-      // this is applied to the ruler
-      self->total_bars =
-        TRANSPORT_DEFAULT_TOTAL_BARS;
-
-      /* set BPM related defaults */
-      self->beats_per_bar =
-        TRANSPORT_DEFAULT_BEATS_PER_BAR;
-      transport_set_beat_unit (self, 4);
-
-      // set positions of playhead, start/end markers
-      position_set_to_bar (&self->playhead_pos, 1);
-      position_set_to_bar (&self->cue_pos, 1);
-      /*position_set_to_bar (*/
-        /*&self->start_marker_pos, 1);*/
-      /*position_set_to_bar (*/
-        /*&self->end_marker_pos, 128);*/
-      position_set_to_bar (&self->loop_start_pos, 1);
-      position_set_to_bar (&self->loop_end_pos, 5);
-
-      transport_set_bpm (
-        self, TRANSPORT_DEFAULT_BPM);
-    }
-
   /* set playstate */
   self->play_state = PLAYSTATE_PAUSED;
 
@@ -120,8 +64,173 @@ transport_init (
     g_settings_get_boolean (
       S_TRANSPORT, "metronome-enabled");
 
+  zix_sem_init (&self->paused, 0);
+}
 
-  zix_sem_init(&self->paused, 0);
+void
+transport_init_loaded (
+  Transport * self)
+{
+  transport_set_beat_unit (
+    self, self->beat_unit);
+
+  init_common (self);
+}
+
+/**
+ * Create a new transport.
+ */
+Transport *
+transport_new (
+  AudioEngine * engine)
+{
+  g_message ("%s: Creating transport...", __func__);
+
+  Transport * self = object_new (Transport);
+
+  if (engine)
+    {
+      engine->transport = self;
+    }
+
+  // set inital total number of beats
+  // this is applied to the ruler
+  self->total_bars =
+    TRANSPORT_DEFAULT_TOTAL_BARS;
+
+  /* set BPM related defaults */
+  self->beats_per_bar =
+    TRANSPORT_DEFAULT_BEATS_PER_BAR;
+  transport_set_beat_unit (self, 4);
+
+  /* set positions */
+  position_set_to_bar (&self->playhead_pos, 1);
+  position_set_to_bar (&self->cue_pos, 1);
+  position_set_to_bar (&self->loop_start_pos, 1);
+  position_set_to_bar (&self->loop_end_pos, 5);
+
+  position_set_to_bar (&self->range_1, 1);
+  position_set_to_bar (&self->range_2, 1);
+
+  init_common (self);
+
+  return self;
+}
+
+/**
+ * Prepares audio regions for stretching (sets the
+ * \ref ZRegion.before_length).
+ *
+ * @param selections If NULL, all audio regions
+ *   are used. If non-NULL, only the regions in the
+ *   selections are used.
+ */
+void
+transport_prepare_audio_regions_for_stretch (
+  Transport *          self,
+  TimelineSelections * sel)
+{
+  if (sel)
+    {
+      for (int i = 0; i < sel->num_regions; i++)
+        {
+          ZRegion * region = sel->regions[i];
+          region->before_length =
+            arranger_object_get_length_in_ticks (
+              (ArrangerObject *) region);
+        }
+    }
+  else
+    {
+      for (int i = 0; i < TRACKLIST->num_tracks; i++)
+        {
+          Track * track = TRACKLIST->tracks[i];
+
+          if (track->type != TRACK_TYPE_AUDIO)
+            continue;
+
+          for (int j = 0; j < track->num_lanes; j++)
+            {
+              TrackLane * lane = track->lanes[j];
+
+              for (int k = 0; k < lane->num_regions;
+                   k++)
+                {
+                  ZRegion * region =
+                    lane->regions[k];
+                  region->before_length =
+                    arranger_object_get_length_in_ticks (
+                      (ArrangerObject *) region);
+                } // foreach region
+            } // foreach lane
+        } // foreach track
+    }
+}
+
+/**
+ * Stretches audio regions.
+ *
+ * @param selections If NULL, all audio regions
+ *   are used. If non-NULL, only the regions in the
+ *   selections are used.
+ * @param with_fixed_ratio Stretch all regions with
+ *   a fixed ratio. If this is off, the current
+ *   region length and \ref ZRegion.before_length
+ *   will be used to calculate the ratio.
+ */
+void
+transport_stretch_audio_regions (
+  Transport *          self,
+  TimelineSelections * sel,
+  bool                 with_fixed_ratio,
+  double               time_ratio)
+{
+  if (sel)
+    {
+      for (int i = 0; i < sel->num_regions; i++)
+        {
+          ZRegion * region =
+            TL_SELECTIONS->regions[i];
+          ArrangerObject * r_obj =
+            (ArrangerObject *) region;
+          double ratio =
+            with_fixed_ratio ? time_ratio :
+            arranger_object_get_length_in_ticks (
+              r_obj) /
+            region->before_length;
+          region_stretch (region, ratio);
+        }
+    }
+  else
+    {
+      for (int i = 0; i < TRACKLIST->num_tracks; i++)
+        {
+          Track * track = TRACKLIST->tracks[i];
+
+          if (track->type != TRACK_TYPE_AUDIO)
+            continue;
+
+          for (int j = 0; j < track->num_lanes; j++)
+            {
+              TrackLane * lane = track->lanes[j];
+
+              for (int k = 0; k < lane->num_regions;
+                   k++)
+                {
+                  ZRegion * region =
+                    lane->regions[k];
+                  ArrangerObject * r_obj =
+                    (ArrangerObject *) region;
+                  double ratio =
+                    with_fixed_ratio ? time_ratio :
+                    arranger_object_get_length_in_ticks (
+                      r_obj) /
+                    region->before_length;
+                  region_stretch (region, ratio);
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -153,7 +262,7 @@ get_ebeat_unit (
 void
 transport_set_beat_unit (
   Transport * self,
-  int beat_unit)
+  int         beat_unit)
 {
   self->beat_unit = beat_unit;
   self->ebeat_unit = get_ebeat_unit (beat_unit);
@@ -167,7 +276,7 @@ transport_set_beat_unit (
    * with the ticks per note
    */
   self->ticks_per_beat =
-    3840.0 / (double) TRANSPORT->beat_unit;
+    3840.0 / (double) self->beat_unit;
   self->ticks_per_bar =
     (self->ticks_per_beat * self->beats_per_bar);
   self->sixteenths_per_beat = 16 / self->beat_unit;
@@ -323,7 +432,7 @@ transport_move_playhead (
                         midi_note, PLAYHEAD->frames))
                     {
                       midi_events =
-                        track->processor.
+                        track->processor->
                           piano_roll->
                             midi_events;
 
@@ -503,6 +612,7 @@ transport_set_loop (
   EVENTS_PUSH (ET_LOOP_TOGGLED, NULL);
 }
 
+#if 0
 /**
  * Adds frames to the given global frames, while
  * adjusting the new frames to loop back if the
@@ -532,6 +642,7 @@ transport_frames_add_frames (
 
   return new_frames;
 }
+#endif
 
 /**
  * Adds frames to the given position similar to
@@ -545,15 +656,33 @@ transport_position_add_frames (
   Position *        pos,
   const nframes_t   frames)
 {
-  long new_global_frames =
-    transport_frames_add_frames (
-      self, pos->frames, frames);
-  position_from_frames (
-    pos, new_global_frames);
+  Position pos_before_adding = *pos;
+  position_add_frames (pos, frames);
+
+  /* if start frames were before the loop-end point
+   * and the new frames are after (loop crossed) */
+  if (TRANSPORT_IS_LOOPING &&
+      pos_before_adding.total_ticks <
+        self->loop_end_pos.total_ticks &&
+      pos->total_ticks >=
+        self->loop_end_pos.total_ticks)
+    {
+      /* adjust the new frames */
+      position_add_ticks (
+        pos,
+        self->loop_start_pos.total_ticks -
+          self->loop_end_pos.total_ticks);
+    }
+
+  /*long new_global_frames =*/
+    /*transport_frames_add_frames (*/
+      /*self, pos->frames, frames);*/
+  /*position_from_frames (*/
+    /*pos, new_global_frames);*/
 
   /* set the frames manually again because
    * position_from_frames rounds them */
-  pos->frames = new_global_frames;
+  /*pos->frames = new_global_frames;*/
 }
 
 /**
@@ -581,4 +710,117 @@ transport_is_loop_point_met (
          g_start_frames);
     }
   return 0;
+}
+
+/**
+ * Sets if the project has range and updates UI.
+ */
+void
+transport_set_has_range (
+  Transport * self,
+  bool        has_range)
+{
+  self->has_range = has_range;
+
+  EVENTS_PUSH (ET_RANGE_SELECTION_CHANGED, NULL);
+}
+
+/**
+ * Stores the position of the range in \ref pos.
+ */
+void
+transport_get_range_pos (
+  Transport * self,
+  bool        first,
+  Position *  pos)
+{
+  bool range1_first =
+    position_is_before_or_equal (
+      &self->range_1, &self->range_2);
+
+  if (first)
+    {
+      if (range1_first)
+        {
+          position_set_to_pos (pos, &self->range_1);
+        }
+      else
+        {
+          position_set_to_pos (pos, &self->range_2);
+        }
+    }
+  else
+    {
+      if (range1_first)
+        {
+          position_set_to_pos (pos, &self->range_2);
+        }
+      else
+        {
+          position_set_to_pos (pos, &self->range_1);
+        }
+    }
+}
+
+void
+transport_set_range1 (
+  Transport * self,
+  Position *  pos,
+  bool        snap)
+{
+  Position init_pos;
+  position_init (&init_pos);
+  if (position_is_before (pos, &init_pos))
+    {
+      position_set_to_pos (
+        &self->range_1, &init_pos);
+    }
+  else
+    {
+      position_set_to_pos (
+        &self->range_1, pos);
+    }
+
+  if (snap)
+    {
+      position_snap_simple (
+        &self->range_1,
+        SNAP_GRID_TIMELINE);
+    }
+}
+
+void
+transport_set_range2 (
+  Transport * self,
+  Position *  pos,
+  bool        snap)
+{
+  Position init_pos;
+  position_init (&init_pos);
+  if (position_is_before (pos, &init_pos))
+    {
+      position_set_to_pos (
+        &self->range_2, &init_pos);
+    }
+  else
+    {
+      position_set_to_pos (
+        &self->range_2, pos);
+    }
+
+  if (snap)
+    {
+      position_snap_simple (
+        &self->range_2,
+        SNAP_GRID_TIMELINE);
+    }
+}
+
+void
+transport_free (
+  Transport * self)
+{
+  zix_sem_destroy (&self->paused);
+
+  object_zero_and_free (self);
 }

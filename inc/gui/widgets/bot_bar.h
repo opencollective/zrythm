@@ -50,6 +50,8 @@ G_DECLARE_FINAL_TYPE (
 #define MW_STATUS_BAR MW_BOT_BAR->status_bar
 #define MW_DIGITAL_TRANSPORT \
   MW_BOT_BAR->digital_transport
+#define MW_DIGITAL_BPM \
+  MW_BOT_BAR->digital_bpm
 
 typedef struct _BotBarWidget
 {
@@ -98,6 +100,9 @@ typedef struct _BotBarWidget
   DigitalMeterWidget *      digital_timesig;
   TransportControlsWidget * transport_controls;
   CpuWidget *               cpu_load;
+
+  /** Color in hex to use in pango markups. */
+  char                      hex_color[8];
 } BotBarWidget;
 
 void

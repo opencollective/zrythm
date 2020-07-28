@@ -26,6 +26,8 @@
 #include "audio/channel.h"
 #include "audio/engine.h"
 #include "plugins/lv2_plugin.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/bot_bar.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/channel.h"
@@ -36,8 +38,10 @@
 #include "utils/cairo.h"
 #include "utils/gtk.h"
 #include "utils/flags.h"
+#include "utils/symap.h"
 #include "utils/ui.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -163,8 +167,16 @@ channel_slot_draw_cb (
         cr, 0.3, 0.3, 0.3, 1.0);
       int w, h;
       char text[400];
-      sprintf (
-        text, _("Slot #%d"), self->slot_index + 1);
+      if (self->type == PLUGIN_SLOT_INSTRUMENT)
+        {
+          sprintf (text, "%s", _("No instrument"));
+        }
+      else
+        {
+          sprintf (
+            text, _("Slot #%d"),
+            self->slot_index + 1);
+        }
       z_cairo_get_text_extents_for_widget (
         widget, self->empty_slot_layout, text,
         &w, &h);
@@ -1006,7 +1018,7 @@ channel_slot_widget_init (
     GDK_LEAVE_NOTIFY_MASK);
 
   gtk_widget_set_size_request (
-    GTK_WIDGET (self), -1, 22);
+    GTK_WIDGET (self), -1, 20);
 
   self->pl_name = NULL;
   gtk_widget_set_tooltip_text (

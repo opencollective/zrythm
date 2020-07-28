@@ -25,7 +25,7 @@
 
 #define _GNU_SOURCE 1  /* To pick up REG_RIP */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -37,31 +37,33 @@
 #include "audio/engine.h"
 #include "audio/track.h"
 #include "audio/transport.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/instrument_track.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
+#include "plugins/plugin_manager.h"
 #include "plugins/lv2_plugin.h"
 #include "plugins/lv2/lv2_control.h"
 #include "plugins/lv2/lv2_gtk.h"
 #include "plugins/lv2/lv2_state.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/arrays.h"
+#include "utils/dialogs.h"
+#include "utils/err_codes.h"
 #include "utils/io.h"
 #include "utils/flags.h"
 #include "utils/math.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
 
-/**
- * Plugin UI refresh rate limits.
- */
-#define MIN_REFRESH_RATE 30.f
-#define MAX_REFRESH_RATE 121.f
-
 void
 plugin_init_loaded (
-  Plugin * self)
+  Plugin * self,
+  bool     project)
 {
   self->magic = PLUGIN_MAGIC;
 
@@ -80,7 +82,8 @@ plugin_init_loaded (
         case PROT_LV2:
           g_return_if_fail (self->lv2);
           self->lv2->plugin = self;
-          lv2_plugin_init_loaded (self->lv2);
+          lv2_plugin_init_loaded (
+            self->lv2, project);
           break;
         default:
           g_warn_if_reached ();
@@ -90,7 +93,11 @@ plugin_init_loaded (
     }
 #endif
 
-  plugin_instantiate (self);
+  if (project)
+    {
+      plugin_instantiate (self, project, NULL);
+      plugin_activate (self, true);
+    }
 
   /*Track * track = plugin_get_track (self);*/
   /*plugin_generate_automation_tracks (self, track);*/
@@ -102,6 +109,13 @@ plugin_init (
   int      track_pos,
   int      slot)
 {
+  g_message (
+    "%s: %s (%s) track pos %d slot %d",
+    __func__, plugin->descr->name,
+    plugin_protocol_strings[
+      plugin->descr->protocol].str,
+    track_pos, slot);
+
   plugin->in_ports_size = 1;
   plugin->out_ports_size = 1;
   plugin->id.track_pos = track_pos;
@@ -316,6 +330,12 @@ plugin_new_from_descr (
   int                track_pos,
   int                slot)
 {
+  g_message (
+    "%s: %s (%s) track pos %d slot %d",
+    __func__, descr->name,
+    plugin_protocol_strings[descr->protocol].str,
+    track_pos, slot);
+
   Plugin * plugin = calloc (1, sizeof (Plugin));
 
   plugin->descr =
@@ -327,12 +347,14 @@ plugin_new_from_descr (
       descr->protocol == PROT_VST3 ||
       descr->protocol == PROT_AU ||
       descr->protocol == PROT_SFZ ||
-      descr->protocol == PROT_SF2)
+      descr->protocol == PROT_SF2 ||
+      descr->open_with_carla)
     {
 new_carla_plugin:
       plugin->descr->open_with_carla = true;
       carla_native_plugin_new_from_descriptor (
         plugin);
+      g_return_val_if_fail (plugin->carla, NULL);
     }
   else
     {
@@ -342,20 +364,21 @@ new_carla_plugin:
         case PROT_LV2:
           {
 #ifdef HAVE_CARLA
+            LilvNode * lv2_uri =
+              lilv_new_uri (
+                LILV_WORLD, descr->uri);
+            const LilvPlugin * lilv_plugin =
+              lilv_plugins_get_by_uri (
+                PM_LILV_NODES.lilv_plugins,
+                lv2_uri);
+            lilv_node_free (lv2_uri);
+
             /* try to bridge bridgable plugins */
             if (!ZRYTHM_TESTING &&
                 g_settings_get_boolean (
                   S_P_PLUGINS_UIS,
                   "bridge-unsupported"))
               {
-                LilvNode * lv2_uri =
-                  lilv_new_uri (
-                    LILV_WORLD, descr->uri);
-                const LilvPlugin * lilv_plugin =
-                  lilv_plugins_get_by_uri (
-                    PM_LILV_NODES.lilv_plugins,
-                    lv2_uri);
-                lilv_node_free (lv2_uri);
                 LilvUIs * uis =
                   lilv_plugin_get_uis (lilv_plugin);
                 const LilvUI * picked_ui;
@@ -377,6 +400,8 @@ new_carla_plugin:
 #endif
             lv2_plugin_new_from_uri (
               plugin, descr->uri);
+            g_return_val_if_fail (
+              plugin->lv2, NULL);
           }
           break;
         default:
@@ -417,6 +442,65 @@ plugin_new_dummy (
   return self;
 }
 
+void
+plugin_append_ports (
+  Plugin *  pl,
+  Port ***  ports,
+  int *     max_size,
+  bool      is_dynamic,
+  int *     size)
+{
+#define _ADD(port) \
+  if (is_dynamic) \
+    { \
+      array_double_size_if_full ( \
+        *ports, (*size), (*max_size), Port *); \
+    } \
+  else if (*size == *max_size) \
+    { \
+      g_return_if_reached (); \
+    } \
+  array_append ( \
+    *ports, (*size), port)
+
+  for (int i = 0; i < pl->num_in_ports; i++)
+    {
+      Port * port = pl->in_ports[i];
+      g_return_if_fail (port);
+      _ADD (port);
+    }
+  for (int i = 0; i < pl->num_out_ports; i++)
+    {
+      Port * port = pl->out_ports[i];
+      g_return_if_fail (port);
+      _ADD (port);
+    }
+
+#undef _ADD
+}
+
+void
+plugin_set_is_project (
+  Plugin * self,
+  bool     is_project)
+{
+  self->is_project = is_project;
+
+  int max_size = 20;
+  Port ** ports =
+    calloc ((size_t) max_size, sizeof (Port *));
+  int num_ports = 0;
+  Port * port;
+  plugin_append_ports (
+    self, &ports, &max_size, true, &num_ports);
+  for (int i = 0; i < num_ports; i++)
+    {
+      port = ports[i];
+      port_set_is_project (port, is_project);
+    }
+  free (ports);
+}
+
 /**
  * Removes the automation tracks associated with
  * this plugin from the automation tracklist in the
@@ -429,7 +513,8 @@ plugin_new_dummy (
 void
 plugin_remove_ats_from_automation_tracklist (
   Plugin * pl,
-  int      free_ats)
+  bool     free_ats,
+  bool     fire_events)
 {
   Track * track = plugin_get_track (pl);
   AutomationTracklist * atl =
@@ -448,10 +533,78 @@ plugin_remove_ats_from_automation_tracklist (
                 pl->id.slot_type)
             {
               automation_tracklist_remove_at (
-                atl, at, free_ats);
+                atl, at, free_ats, fire_events);
             }
         }
     }
+}
+
+/**
+ * Moves the plugin to the given slot in
+ * the given channel.
+ *
+ * If a plugin already exists, it deletes it and
+ * replaces it.
+ */
+void
+plugin_move (
+  Plugin *       pl,
+  Channel *      ch,
+  PluginSlotType slot_type,
+  int            slot)
+{
+  g_return_if_fail (pl && ch);
+
+  /* confirm if another plugin exists */
+  Plugin * existing_pl = NULL;
+  switch (slot_type)
+    {
+    case PLUGIN_SLOT_MIDI_FX:
+      existing_pl = ch->midi_fx[slot];
+      break;
+    case PLUGIN_SLOT_INSTRUMENT:
+      existing_pl = ch->instrument;
+      break;
+    case PLUGIN_SLOT_INSERT:
+      existing_pl = ch->inserts[slot];
+      break;
+    }
+  if (existing_pl)
+    {
+      GtkDialog * dialog =
+        dialogs_get_overwrite_plugin_dialog (
+          GTK_WINDOW (MAIN_WINDOW));
+      int result =
+        gtk_dialog_run (dialog);
+      gtk_widget_destroy (GTK_WIDGET (dialog));
+
+      /* do nothing if not accepted */
+      if (result != GTK_RESPONSE_ACCEPT)
+        return;
+    }
+
+  int prev_slot = pl->id.slot;
+  PluginSlotType prev_slot_type =
+    pl->id.slot_type;
+  Channel * prev_ch = plugin_get_channel (pl);
+
+  /* move plugin's automation from src to dest */
+  plugin_move_automation (
+    pl, prev_ch, ch, slot_type, slot);
+
+  /* remove plugin from its channel */
+  channel_remove_plugin (
+    prev_ch, prev_slot_type, prev_slot,
+    0, 0, F_NO_RECALC_GRAPH);
+
+  /* add plugin to its new channel */
+  channel_add_plugin (
+    ch, slot_type, slot, pl, 0,
+    F_NO_GEN_AUTOMATABLES, F_RECALC_GRAPH,
+    F_PUBLISH_EVENTS);
+
+  EVENTS_PUSH (ET_CHANNEL_SLOTS_CHANGED, prev_ch);
+  EVENTS_PUSH (ET_CHANNEL_SLOTS_CHANGED, ch);
 }
 
 /**
@@ -489,27 +642,6 @@ plugin_set_channel_and_slot (
       lv2_plugin_update_port_identifiers (
         pl->lv2);
     }
-}
-
-/**
- * Returns if the Plugin has a supported custom
- * UI.
- *
- * TODO
- */
-int
-plugin_has_supported_custom_ui (
-  Plugin * self)
-{
-  switch (self->descr->protocol)
-    {
-    case PROT_LV2:
-      break;
-    default:
-      g_return_val_if_reached (-1);
-      break;
-    }
-  g_return_val_if_reached (-1);
 }
 
 Track *
@@ -565,18 +697,77 @@ plugin_find (
   return ret;
 }
 
-void
+char *
+plugin_generate_window_title (
+  Plugin * plugin)
+{
+  g_return_val_if_fail (
+    plugin && plugin->descr, NULL);
+  Track * track =
+    plugin_get_track (plugin);
+  const char* track_name = track->name;
+  const char* plugin_name = plugin->descr->name;
+  g_return_val_if_fail (
+    track_name && plugin_name, NULL);
+
+  char carla[8] = "";
+  if (plugin->descr->open_with_carla)
+    {
+      strcpy (carla, " c");
+    }
+
+  char title[500];
+  sprintf (
+    title,
+    "%s (%s #%d%s)",
+    plugin_name, track_name, plugin->id.slot + 1,
+    carla);
+
+  switch (plugin->descr->protocol)
+    {
+    case PROT_LV2:
+      if (!plugin->descr->open_with_carla &&
+          plugin->lv2->preset)
+        {
+          Lv2Plugin * lv2 = plugin->lv2;
+          const char* preset_label =
+            lilv_state_get_label (lv2->preset);
+          g_return_val_if_fail (preset_label, NULL);
+          char preset_part[500];
+          sprintf (
+            preset_part, " - %s",
+            preset_label);
+          strcat (
+            title, preset_part);
+        }
+      break;
+    default:
+      break;
+    }
+
+  return g_strdup (title);
+}
+
+/**
+ * Activates or deactivates the plugin.
+ *
+ * @param activate True to activate, false to
+ *   deactivate.
+ */
+int
 plugin_activate (
   Plugin * pl,
   bool     activate)
 {
-  g_return_if_fail (pl);
+  g_return_val_if_fail (pl, ERR_OBJECT_IS_NULL);
 
   if (pl->descr->open_with_carla)
     {
 #ifdef HAVE_CARLA
-      carla_native_plugin_activate (
-        pl->carla, activate);
+      int ret =
+        carla_native_plugin_activate (
+          pl->carla, activate);
+      g_return_val_if_fail (ret == 0, ret);
 #endif
     }
   else
@@ -584,13 +775,72 @@ plugin_activate (
       switch (pl->descr->protocol)
         {
         case PROT_LV2:
-          lv2_plugin_activate (pl->lv2, activate);
+          {
+            int ret =
+              lv2_plugin_activate (
+                pl->lv2, activate);
+            g_return_val_if_fail (ret == 0, ret);
+          }
           break;
         default:
           g_warn_if_reached ();
           break;
         }
     }
+
+  pl->activated = activate;
+
+  return 0;
+}
+
+/**
+ * Cleans up an instantiated but not activated
+ * plugin.
+ */
+int
+plugin_cleanup (
+  Plugin * self)
+{
+  g_message (
+    "Cleaning up %s...", self->descr->name);
+
+  if (!self->activated && self->instantiated)
+    {
+      if (self->descr->open_with_carla)
+        {
+#ifdef HAVE_CARLA
+#if 0
+          /* TODO */
+          int ret =
+            carla_native_plugin_cleanup (
+              self->carla, activate);
+          g_return_val_if_fail (ret == 0, ret);
+#endif
+#endif
+        }
+      else
+        {
+          switch (self->descr->protocol)
+            {
+            case PROT_LV2:
+              {
+                int ret =
+                  lv2_plugin_cleanup (self->lv2);
+                g_return_val_if_fail (
+                  ret == 0, ret);
+              }
+              break;
+            default:
+              g_warn_if_reached ();
+              break;
+            }
+        }
+    }
+
+  self->instantiated = false;
+  g_message ("done");
+
+  return 0;
 }
 
 /**
@@ -651,6 +901,10 @@ plugin_add_in_port (
   Port *   port)
 {
   ADD_PORT (in);
+  /*g_message (*/
+    /*"added input port %s to plugin %s at index %d",*/
+    /*port->id.label, pl->descr->name,*/
+    /*port->id.port_index);*/
 }
 
 /**
@@ -662,6 +916,10 @@ plugin_add_out_port (
   Port *   port)
 {
   ADD_PORT (out);
+  /*g_message (*/
+    /*"added output port %s to plugin %s at index %d",*/
+    /*port->id.label, pl->descr->name,*/
+    /*port->id.port_index);*/
 }
 #undef ADD_PORT
 
@@ -721,6 +979,7 @@ plugin_move_automation (
       at->port_id.plugin_id.slot = new_slot;
       at->port_id.plugin_id.slot_type =
         new_slot_type;
+      at->port_id.plugin_id.track_pos = track->pos;
     }
 }
 
@@ -731,6 +990,8 @@ void
 plugin_set_ui_refresh_rate (
   Plugin * self)
 {
+  g_message ("setting refresh rate...");
+
   if (ZRYTHM_TESTING)
     {
       self->ui_update_hz = 30.f;
@@ -771,8 +1032,8 @@ plugin_set_ui_refresh_rate (
     }
 
   /* clamp the refresh rate to sensible limits */
-  if (self->ui_update_hz < MIN_REFRESH_RATE ||
-      self->ui_update_hz > MAX_REFRESH_RATE)
+  if (self->ui_update_hz < PLUGIN_MIN_REFRESH_RATE ||
+      self->ui_update_hz > PLUGIN_MAX_REFRESH_RATE)
     {
       g_warning (
         "Invalid refresh rate of %.01f received, "
@@ -780,9 +1041,13 @@ plugin_set_ui_refresh_rate (
         (double) self->ui_update_hz);
       self->ui_update_hz =
         CLAMP (
-          self->ui_update_hz, MIN_REFRESH_RATE,
-          MAX_REFRESH_RATE);
+          self->ui_update_hz,
+          PLUGIN_MIN_REFRESH_RATE,
+          PLUGIN_MAX_REFRESH_RATE);
     }
+
+  g_message ("refresh rate set to %f",
+    (double) self->ui_update_hz);
 }
 
 /**
@@ -792,6 +1057,8 @@ char *
 plugin_get_escaped_name (
   Plugin * pl)
 {
+  g_return_val_if_fail (pl->descr, NULL);
+
   char tmp[900];
   io_escape_dir_name (tmp, pl->descr->name);
   return g_strdup (tmp);
@@ -859,13 +1126,17 @@ plugin_update_identifier (
   int i;
   for (i = 0; i < self->num_in_ports; i++)
     {
+      Port * port = self->in_ports[i];
       port_update_track_pos (
-        self->in_ports[i], self->id.track_pos);
+        port, NULL, self->id.track_pos);
+      port->id.plugin_id = self->id;
     }
   for (i = 0; i < self->num_out_ports; i++)
     {
+      Port * port = self->out_ports[i];
       port_update_track_pos (
-        self->out_ports[i], self->id.track_pos);
+        port, NULL, self->id.track_pos);
+      port->id.plugin_id = self->id;
     }
 }
 
@@ -884,22 +1155,36 @@ plugin_set_track_pos (
 
 /**
  * Instantiates the plugin (e.g. when adding to a
- * channel).
+ * channel)
+ *
+ * @param project Whether this is a project plugin
+ *   (as opposed to a clone used in actions).
  */
 int
 plugin_instantiate (
-  Plugin * pl)
+  Plugin *    pl,
+  bool        project,
+  LilvState * state)
 {
   g_message ("Instantiating %s...",
              pl->descr->name);
 
   plugin_set_ui_refresh_rate (pl);
 
+  if (!PROJECT->loaded)
+    {
+      g_return_val_if_fail (pl->state_dir, -1);
+    }
+  g_message ("state dir: %s", pl->state_dir);
+
   if (pl->descr->open_with_carla)
     {
 #ifdef HAVE_CARLA
       carla_native_plugin_instantiate (
         pl->carla, !PROJECT->loaded);
+      /* save the state */
+      carla_native_plugin_save_state (
+        pl->carla, false);
 #else
       g_return_val_if_reached (-1);
 #endif
@@ -910,14 +1195,23 @@ plugin_instantiate (
         {
         case PROT_LV2:
           {
-            g_message ("state file: %s",
-                       pl->lv2->state_file);
+            pl->lv2->plugin = pl;
             if (lv2_plugin_instantiate (
-                  pl->lv2, NULL))
+                  pl->lv2, project,
+                  pl->state_dir ? true : false,
+                  NULL, state))
               {
                 g_warning ("lv2 instantiate failed");
                 return -1;
               }
+            else
+              {
+                pl->instantiated = true;
+              }
+            g_warn_if_fail (pl->lv2->instance);
+            /* save the state */
+            lv2_state_save_to_file (
+              pl->lv2, F_NOT_BACKUP);
           }
           break;
         default:
@@ -928,6 +1222,8 @@ plugin_instantiate (
     }
   control_port_set_val_from_normalized (
     pl->enabled, 1.f, 0);
+
+  pl->instantiated = true;
 
   return 0;
 }
@@ -1085,45 +1381,89 @@ plugin_is_selected (
 }
 
 /**
- * Generates a state directory path for the plugin.
- *
- * @param mkdir Create the directory at the path.
- *
- * @return The path. Must be free'd by caller with
- *   g_free().
+ * Returns the state dir as an absolute path.
  */
 char *
-plugin_generate_state_dir (
-  Plugin * pl,
-  bool     mkdir)
+plugin_get_abs_state_dir (
+  Plugin * self,
+  bool     is_backup)
 {
+  plugin_ensure_state_dir (self, is_backup);
+
+  char * parent_dir =
+    project_get_path (
+      PROJECT, PROJECT_PATH_PLUGIN_STATES,
+      is_backup);
+  char * full_path =
+    g_build_filename (
+      parent_dir, self->state_dir, NULL);
+
+  g_free (parent_dir);
+
+  return full_path;
+}
+
+/**
+ * Ensures the state dir exists or creates it.
+ */
+void
+plugin_ensure_state_dir (
+  Plugin * self,
+  bool     is_backup)
+{
+  if (self->state_dir)
+    {
+      char * parent_dir =
+        project_get_path (
+          PROJECT, PROJECT_PATH_PLUGIN_STATES,
+          is_backup);
+      char * abs_state_dir =
+        g_build_filename (
+          parent_dir, self->state_dir, NULL);
+      io_mkdir (abs_state_dir);
+      g_free (parent_dir);
+      g_free (abs_state_dir);
+      return;
+    }
+
   char * escaped_name =
-    plugin_get_escaped_name (pl);
+    plugin_get_escaped_name (self);
+  char * parent_dir =
+    project_get_path (
+      PROJECT, PROJECT_PATH_PLUGIN_STATES,
+      is_backup);
   char * tmp =
     g_strdup_printf (
-      "tmp_%s_XXXXXX", escaped_name);
-  char * states_dir =
-    project_get_states_dir (
-      PROJECT, PROJECT->backup_dir != NULL);
-  char * state_dir_plugin =
-    g_build_filename (
-      states_dir, tmp, NULL);
-  g_free (states_dir);
-  g_free (tmp);
+      "%s_XXXXXX", escaped_name);
+  char * abs_state_dir_template =
+    g_build_filename (parent_dir, tmp, NULL);
+  io_mkdir (parent_dir);
+  char * abs_state_dir =
+    g_mkdtemp (abs_state_dir_template);
+  if (!abs_state_dir)
+    {
+      g_critical (
+        "Failed to make state dir: %s",
+        strerror (errno));
+    }
+  self->state_dir =
+    g_path_get_basename (abs_state_dir);
   g_free (escaped_name);
-
-  if (mkdir)
-    io_mkdir (state_dir_plugin);
-
-  return state_dir_plugin;
+  g_free (parent_dir);
+  g_free (tmp);
+  g_free (abs_state_dir);
 }
 
 /**
  * Clones the given plugin.
+ *
+ * @bool src_is_project Whether the given plugin
+ *   is a project plugin.
  */
 Plugin *
 plugin_clone (
-  Plugin * pl)
+  Plugin * pl,
+  bool     src_is_project)
 {
   Plugin * clone = NULL;
 #ifdef HAVE_CARLA
@@ -1138,67 +1478,103 @@ plugin_clone (
         clone && clone->carla, NULL);
 
       /* instantiate */
-      int ret = plugin_instantiate (clone);
-      g_return_val_if_fail (!ret, NULL);
+      int ret =
+        plugin_instantiate (clone, false, NULL);
+      g_return_val_if_fail (ret == 0, NULL);
+
+      /* also instantiate the source, if not
+       * already instantiated, so its state can
+       * be ready */
+      ret =
+        plugin_instantiate (
+          pl, src_is_project, NULL);
+      g_return_val_if_fail (ret == 0, NULL);
 
       /* save the state of the original plugin */
-      char * state_dir_pl =
-        plugin_generate_state_dir (
-          pl, true);
       carla_native_plugin_save_state (
-        pl->carla, state_dir_pl);
+        pl->carla, F_NOT_BACKUP);
 
       /* load the state to the new plugin. */
+      char * state_file_abs_path =
+        carla_native_plugin_get_abs_state_file_path  (
+          pl->carla, F_NOT_BACKUP);
       carla_native_plugin_load_state (
-        clone->carla, state_dir_pl);
+        clone->carla, state_file_abs_path);
 
-      g_free (state_dir_pl);
+      /* create a new state dir and save the state
+       * for the clone */
+      plugin_ensure_state_dir (
+        clone, F_NOT_BACKUP);
+      carla_native_plugin_save_state (
+        clone->carla, F_NOT_BACKUP);
+
+      /* cleanup the source if it wasnt in the
+       * project */
+      if (!src_is_project)
+        {
+          plugin_cleanup (pl);
+        }
     }
   else
     {
 #endif
       if (pl->descr->protocol == PROT_LV2)
         {
-          /* NOTE from rgareus:
-           * I think you can use   lilv_state_restore (lilv_state_new_from_instance (..), ...)
-           * and skip  lilv_state_new_from_file() ; lilv_state_save ()
-           * lilv_state_new_from_instance() handles files and externals, too */
-
-          /* save state to file */
-          char * state_dir_plugin =
-            plugin_generate_state_dir (
-              pl, true);
-          lv2_plugin_save_state_to_file (
-            pl->lv2, state_dir_plugin);
-          g_free (state_dir_plugin);
+          /* if src plugin not instantiated,
+           * instantiate it */
+          if (!pl->instantiated)
+            {
+              int ret =
+                plugin_instantiate (
+                  pl, src_is_project, NULL);
+              g_return_val_if_fail (
+                ret == 0, NULL);
+            }
           g_return_val_if_fail (
-            pl->lv2->state_file, NULL);
+            pl->instantiated &&
+            pl->lv2->instance, NULL);
 
-          /* create a new plugin with same descriptor */
+          /* Make a state */
+          LilvState * state =
+            lv2_state_save_to_file (
+              pl->lv2, F_NOT_BACKUP);
+
+          /* create a new plugin with same
+           * descriptor */
           clone =
             plugin_new_from_descr (
               pl->descr, pl->id.track_pos,
               pl->id.slot);
 
-          /* set the state file on the new Lv2Plugin
-           * as the state filed saved on the original
-           * so that it can be used when
-           * instantiating */
-          clone->lv2->state_file =
-            g_strdup (pl->lv2->state_file);
-
-          /* instantiate */
-          int ret = plugin_instantiate (clone);
+          /* instantiate using the state */
+          int ret =
+            plugin_instantiate (
+              clone, false, state);
           g_return_val_if_fail (!ret, NULL);
 
+          /* verify */
           g_return_val_if_fail (
             clone && clone->lv2 &&
             clone->lv2->num_ports ==
               pl->lv2->num_ports,
             NULL);
 
-          /* delete the state file */
-          io_remove (pl->lv2->state_file);
+          /* free the state */
+          lilv_state_free (state);
+
+          /* create a new state dir and save the
+           * state  for the clone */
+          plugin_ensure_state_dir (
+            clone, F_NOT_BACKUP);
+          lv2_state_save_to_file (
+            clone->lv2, F_NOT_BACKUP);
+
+          /* cleanup the source if it wasnt in the
+           * project */
+          if (!src_is_project)
+            {
+              plugin_cleanup (pl);
+            }
         }
 #ifdef HAVE_CARLA
     }
@@ -1207,8 +1583,8 @@ plugin_clone (
     pl->num_in_ports || pl->num_out_ports, NULL);
 
   g_return_val_if_fail (clone, NULL);
-  clone->id.slot = pl->id.slot;
-  clone->id.track_pos = pl->id.track_pos;
+  plugin_identifier_copy (
+    &clone->id, &pl->id);
   clone->magic = PLUGIN_MAGIC;
   clone->visible = pl->visible;
 
@@ -1613,10 +1989,10 @@ plugin_connect_to_prefader (
                 {
                   port_connect (
                     out_port,
-                    ch->prefader.stereo_in->l, 1);
+                    ch->prefader->stereo_in->l, 1);
                   port_connect (
                     out_port,
-                    ch->prefader.stereo_in->r, 1);
+                    ch->prefader->stereo_in->r, 1);
                   break;
                 }
             }
@@ -1637,14 +2013,14 @@ plugin_connect_to_prefader (
                 {
                   port_connect (
                     out_port,
-                    ch->prefader.stereo_in->l, 1);
+                    ch->prefader->stereo_in->l, 1);
                   last_index++;
                 }
               else if (last_index == 1)
                 {
                   port_connect (
                     out_port,
-                    ch->prefader.stereo_in->r, 1);
+                    ch->prefader->stereo_in->r, 1);
                   break;
                 }
             }
@@ -1675,16 +2051,16 @@ plugin_disconnect_from_prefader (
         {
           if (ports_connected (
                 out_port,
-                ch->prefader.stereo_in->l))
+                ch->prefader->stereo_in->l))
             port_disconnect (
               out_port,
-              ch->prefader.stereo_in->l);
+              ch->prefader->stereo_in->l);
           if (ports_connected (
                 out_port,
-                ch->prefader.stereo_in->r))
+                ch->prefader->stereo_in->r))
             port_disconnect (
               out_port,
-              ch->prefader.stereo_in->r);
+              ch->prefader->stereo_in->r);
         }
       else if (type == TYPE_EVENT &&
                out_port->id.type ==
@@ -1692,10 +2068,10 @@ plugin_disconnect_from_prefader (
         {
           if (ports_connected (
                 out_port,
-                ch->prefader.midi_in))
+                ch->prefader->midi_in))
             port_disconnect (
               out_port,
-              ch->prefader.midi_in);
+              ch->prefader->midi_in);
         }
     }
 }
@@ -1867,29 +2243,58 @@ done2:
 }
 
 /**
- * To be called immediately when a channel or plugin
- * is deleted.
+ * To be called immediately when a channel or
+ * plugin is deleted.
  *
  * A call to plugin_free can be made at any point
  * later just to free the resources.
  */
 void
-plugin_disconnect (Plugin * plugin)
+plugin_disconnect (
+  Plugin * self)
 {
-  plugin->deleting = 1;
+  self->deleting = 1;
 
-  /* disconnect all ports */
-  ports_disconnect (
-    plugin->in_ports,
-    plugin->num_in_ports, 1);
-  ports_disconnect (
-    plugin->out_ports,
-    plugin->num_out_ports, 1);
-  g_message (
-    "DISCONNECTED ALL PORTS OF %p PLUGIN %d %d",
-    plugin,
-    plugin->num_in_ports,
-    plugin->num_out_ports);
+  if (self->is_project)
+    {
+      /* disconnect all ports */
+      ports_disconnect (
+        self->in_ports,
+        self->num_in_ports, true);
+      ports_disconnect (
+        self->out_ports,
+        self->num_out_ports, true);
+      g_message (
+        "%s: DISCONNECTED ALL PORTS OF %s %d %d",
+        __func__, self->descr->name,
+        self->num_in_ports,
+        self->num_out_ports);
+
+#ifdef HAVE_CARLA
+      if (self->descr->open_with_carla)
+        {
+          carla_native_plugin_close (self->carla);
+        }
+#endif
+    }
+}
+
+/**
+ * Deletes any state files associated with this
+ * plugin.
+ *
+ * This should be called when a plugin instance is
+ * removed from the project (including undo stacks)
+ * to remove any files not needed anymore.
+ */
+void
+plugin_delete_state_files (
+  Plugin * self)
+{
+  g_return_if_fail (
+    g_path_is_absolute (self->state_dir));
+
+  io_rmdir (self->state_dir, true);
 }
 
 /**

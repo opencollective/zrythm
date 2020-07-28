@@ -17,12 +17,12 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
-
-#ifdef HAVE_RTMIDI
-
 #ifndef __AUDIO_ENGINE_RTMIDI_H__
 #define __AUDIO_ENGINE_RTMIDI_H__
+
+#include "zrythm-config.h"
+
+#ifdef HAVE_RTMIDI
 
 typedef struct AudioEngine AudioEngine;
 
@@ -52,8 +52,7 @@ engine_rtmidi_rescan_ports (
  */
 int
 engine_rtmidi_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 /**
  * Gets the number of input ports (devices).
@@ -80,7 +79,8 @@ engine_rtmidi_tear_down (
 
 int
 engine_rtmidi_activate (
-  AudioEngine * self);
+  AudioEngine * self,
+  bool          activate);
 
-#endif
 #endif /* HAVE_RTMIDI */
+#endif

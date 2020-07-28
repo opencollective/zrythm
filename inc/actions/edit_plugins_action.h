@@ -93,6 +93,10 @@ static const cyaml_schema_value_t
     edit_plugins_action_fields_schema),
 };
 
+void
+edit_plugins_action_init_loaded (
+  EditPluginsAction * self);
+
 UndoableAction *
 edit_plugins_action_new (
   MixerSelections *     ms,
@@ -100,19 +104,19 @@ edit_plugins_action_new (
 
 int
 edit_plugins_action_do (
-	EditPluginsAction * self);
+  EditPluginsAction * self);
 
 int
 edit_plugins_action_undo (
-	EditPluginsAction * self);
+  EditPluginsAction * self);
 
 char *
 edit_plugins_action_stringize (
-	EditPluginsAction * self);
+  EditPluginsAction * self);
 
 void
 edit_plugins_action_free (
-	EditPluginsAction * self);
+  EditPluginsAction * self);
 
 /**
  * @}

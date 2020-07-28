@@ -17,8 +17,10 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "audio/mixer.h"
+#include "actions/undoable_action.h"
+#include "actions/undo_manager.h"
 #include "audio/port.h"
+#include "audio/router.h"
 #include "audio/track.h"
 #include "audio/tracklist.h"
 #include "gui/widgets/main_window.h"
@@ -28,6 +30,7 @@
 #include "project.h"
 #include "utils/resources.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -69,9 +72,11 @@ on_ok_clicked (
 
   if (ports_can_be_connected (src, dest))
     {
-      port_connect (
-        src, dest, 0);
-      mixer_recalc_graph (MIXER);
+      UndoableAction * ua =
+        port_connection_action_new (
+          PORT_CONNECTION_CONNECT,
+          &src->id, &dest->id);
+      undo_manager_perform (UNDO_MANAGER, ua);
 
       gtk_widget_destroy (GTK_WIDGET (self->owner));
       /*port_connections_popover_widget_refresh (*/
@@ -147,13 +152,13 @@ create_model_for_ports (
               track->out_signal_type ==
                 TYPE_AUDIO)
             {
-              port = ch->prefader.stereo_out->l;
+              port = ch->prefader->stereo_out->l;
               ADD_ROW;
-              port = ch->prefader.stereo_out->r;
+              port = ch->prefader->stereo_out->r;
               ADD_ROW;
-              port = ch->fader.stereo_out->l;
+              port = ch->fader->stereo_out->l;
               ADD_ROW;
-              port = ch->fader.stereo_out->r;
+              port = ch->fader->stereo_out->r;
               ADD_ROW;
             }
           else if (type == TYPE_EVENT &&
@@ -173,20 +178,20 @@ create_model_for_ports (
                     TYPE_AUDIO)
                 {
                   port =
-                    track->processor.stereo_in->l;
+                    track->processor->stereo_in->l;
                   ADD_ROW;
                   port =
-                    track->processor.stereo_in->r;
+                    track->processor->stereo_in->r;
                   ADD_ROW;
                 }
 
               if (track->channel)
                 {
                   port =
-                    track->channel->fader.amp;
+                    track->channel->fader->amp;
                   ADD_ROW;
                   port =
-                    track->channel->fader.balance;
+                    track->channel->fader->balance;
                   ADD_ROW;
                 }
             }
@@ -194,7 +199,7 @@ create_model_for_ports (
                    track->in_signal_type ==
                      TYPE_EVENT)
             {
-              port = track->processor.midi_in;
+              port = track->processor->midi_in;
               ADD_ROW;
             }
         }

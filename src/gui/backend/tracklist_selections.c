@@ -22,24 +22,35 @@
 #include "audio/position.h"
 #include "audio/track.h"
 #include "audio/transport.h"
-#include "gui/backend/events.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/tracklist_selections.h"
 #include "gui/widgets/midi_region.h"
 #include "project.h"
 #include "utils/arrays.h"
 #include "utils/flags.h"
-#include "utils/yaml.h"
+#include "utils/objects.h"
 
 #include <gtk/gtk.h>
 
 void
 tracklist_selections_init_loaded (
-  TracklistSelections * ts)
+  TracklistSelections * self)
 {
-  int i;
-  for (i = 0; i < ts->num_tracks; i++)
-    ts->tracks[i] =
-      TRACKLIST->tracks[ts->tracks[i]->pos];
+  for (int i = 0; i < self->num_tracks; i++)
+    {
+      Track * track = self->tracks[i];
+      int track_pos = track->pos;
+      track_init_loaded (track, false);
+      if (self->is_project)
+        {
+          self->tracks[i] =
+            TRACKLIST->tracks[track_pos];
+          /* TODO */
+          /*track_disconnect (track, true, false);*/
+          /*track_free (track);*/
+        }
+    }
 }
 
 /**
@@ -91,13 +102,29 @@ tracklist_selections_get_lowest_track (
 }
 
 /**
+ * @param is_project Whether these selections are
+ *   the project selections (as opposed to clones).
+ */
+TracklistSelections *
+tracklist_selections_new (
+  bool  is_project)
+{
+  TracklistSelections * self =
+    object_new (TracklistSelections);
+
+  self->is_project = is_project;
+
+  return self;
+}
+
+/**
  * Adds a Track to the selections.
  */
 void
 tracklist_selections_add_track (
   TracklistSelections * self,
   Track *               track,
-  int                   fire_events)
+  bool                  fire_events)
 {
   if (!array_contains (self->tracks,
                       self->num_tracks,
@@ -109,10 +136,9 @@ tracklist_selections_add_track (
 
       if (fire_events)
         {
-          EVENTS_PUSH (ET_TRACK_CHANGED,
-                       track);
-          EVENTS_PUSH (ET_TRACKLIST_SELECTIONS_CHANGED,
-                       NULL);
+          EVENTS_PUSH (ET_TRACK_CHANGED, track);
+          EVENTS_PUSH (
+            ET_TRACKLIST_SELECTIONS_CHANGED, NULL);
         }
     }
 
@@ -120,9 +146,124 @@ tracklist_selections_add_track (
    * on, turn these on */
   if (!track->recording && track->channel)
     {
-      track_set_recording (track, 1, fire_events);
+      track_set_recording (track, true, fire_events);
       track->channel->record_set_automatically =
-        1;
+        true;
+    }
+}
+
+void
+tracklist_selections_add_tracks_in_range (
+  TracklistSelections * self,
+  int                   min_pos,
+  int                   max_pos,
+  bool                  fire_events)
+{
+  g_message (
+    "selecting tracks from %d to %d...",
+    min_pos, max_pos);
+
+  tracklist_selections_clear (self);
+
+  for (int i = min_pos; i <= max_pos; i++)
+    {
+      Track * track = TRACKLIST->tracks[i];
+      tracklist_selections_add_track (
+        self, track, fire_events);
+    }
+
+  g_message ("done");
+}
+
+void
+tracklist_selections_clear (
+  TracklistSelections * self)
+{
+  for (int i = self->num_tracks - 1; i >= 0; i--)
+    {
+      Track * track = self->tracks[i];
+      tracklist_selections_remove_track (
+        self, track, 0);
+
+      if (track->is_project)
+        {
+          EVENTS_PUSH (ET_TRACK_CHANGED, track);
+        }
+    }
+
+  if (self->is_project)
+    {
+      EVENTS_PUSH (
+        ET_TRACKLIST_SELECTIONS_CHANGED, NULL);
+    }
+}
+
+/**
+ * Handle a click selection.
+ */
+void
+tracklist_selections_handle_click (
+  Track * track,
+  bool    ctrl,
+  bool    shift,
+  bool    dragged)
+{
+  bool is_selected = track_is_selected (track);
+  if (is_selected)
+    {
+      if ((ctrl || shift) && !dragged)
+        {
+          track_select (
+            track, F_NO_SELECT, F_NOT_EXCLUSIVE,
+            F_PUBLISH_EVENTS);
+        }
+      else
+        {
+          /* do nothing */
+        }
+    }
+  else /* not selected */
+    {
+      if (shift)
+        {
+          if (TRACKLIST_SELECTIONS->num_tracks > 0)
+            {
+              Track * highest =
+                tracklist_selections_get_highest_track (
+                  TRACKLIST_SELECTIONS);
+              Track * lowest =
+                tracklist_selections_get_lowest_track (
+                  TRACKLIST_SELECTIONS);
+              if (track->pos > highest->pos)
+                {
+                  /* select all tracks in between */
+                  tracklist_selections_add_tracks_in_range (
+                    TRACKLIST_SELECTIONS,
+                    highest->pos, track->pos,
+                    F_PUBLISH_EVENTS);
+                }
+              else if (track->pos < lowest->pos)
+                {
+                  /* select all tracks in between */
+                  tracklist_selections_add_tracks_in_range (
+                    TRACKLIST_SELECTIONS,
+                    track->pos, lowest->pos,
+                    F_PUBLISH_EVENTS);
+                }
+            }
+        }
+      else if (ctrl)
+        {
+          track_select (
+            track, F_SELECT, F_NOT_EXCLUSIVE,
+            F_PUBLISH_EVENTS);
+        }
+      else
+        {
+          track_select (
+            track, F_SELECT, F_EXCLUSIVE,
+            F_PUBLISH_EVENTS);
+        }
     }
 }
 
@@ -163,10 +304,9 @@ tracklist_selections_remove_track (
     {
       if (fire_events)
         {
-          EVENTS_PUSH (ET_TRACK_CHANGED,
-                       track);
-          EVENTS_PUSH (ET_TRACKLIST_SELECTIONS_CHANGED,
-                       NULL);
+          EVENTS_PUSH (ET_TRACK_CHANGED, track);
+          EVENTS_PUSH (
+            ET_TRACKLIST_SELECTIONS_CHANGED, NULL);
         }
       return;
     }
@@ -229,17 +369,7 @@ tracklist_selections_select_single (
   TracklistSelections * ts,
   Track *               track)
 {
-  Track * _track;
-  for (int i = ts->num_tracks - 1; i >= 0; i--)
-    {
-      _track = ts->tracks[i];
-      tracklist_selections_remove_track (
-        ts, _track, 0);
-
-      /* FIXME what if the track is deleted */
-      EVENTS_PUSH (ET_TRACK_CHANGED,
-                   _track);
-    }
+  tracklist_selections_clear (ts);
 
   tracklist_selections_add_track (
     ts, track, 0);
@@ -327,16 +457,15 @@ tracklist_selections_clone (
   TracklistSelections * src)
 {
   TracklistSelections * new_ts =
-    calloc (1, sizeof (TracklistSelections));
+    object_new (TracklistSelections);
 
   for (int i = 0; i < src->num_tracks; i++)
     {
       Track * r = src->tracks[i];
       Track * new_r =
-        track_clone (r);
+        track_clone (r, src->is_project);
       array_append (
-        new_ts->tracks,
-        new_ts->num_tracks,
+        new_ts->tracks, new_ts->num_tracks,
         new_r);
     }
 
@@ -379,9 +508,19 @@ tracklist_selections_mark_for_bounce (
 
 
 void
-tracklist_selections_free (TracklistSelections * self)
+tracklist_selections_free (
+  TracklistSelections * self)
 {
-  free (self);
+  if (!self->is_project)
+    {
+      for (int i = 0; i < self->num_tracks; i++)
+        {
+          object_free_w_func_and_null (
+            track_free, self->tracks[i]);
+        }
+    }
+
+  object_zero_and_free (self);
 }
 
 SERIALIZE_SRC (

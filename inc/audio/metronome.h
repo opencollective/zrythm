@@ -28,13 +28,15 @@
 
 #include "utils/types.h"
 
+typedef struct AudioEngine AudioEngine;
+
 /**
  * @addtogroup audio
  *
  * @{
  */
 
-#define METRONOME (&ZRYTHM->metronome)
+#define METRONOME (AUDIO_ENGINE->metronome)
 
 /**
  * The type of the metronome sound.
@@ -78,26 +80,24 @@ typedef struct Metronome
  * Initializes the Metronome by loading the samples
  * into memory.
  */
-void
-metronome_init (
-  Metronome * self);
+Metronome *
+metronome_new (void);
 
 /**
- * Fills the given frame buffer with metronome audio
- * based on the current position.
+ * Queues metronome events (if any) within the
+ * current processing cycle.
  *
- * @param buf The frame buffer.
- * @param g_start_frame The global start position in
- *   frames.
- * @param nframes Number of frames to fill. These must
- *   not exceed the buffer size.
+ * @param loffset Local offset in this cycle.
  */
-//void
-//metronome_fill_buffer (
-  //Metronome * self,
-  //float *     buf,
-  //const long  g_start_frame,
-  //const int   nframes);
+void
+metronome_queue_events (
+ AudioEngine *   self,
+ const nframes_t loffset,
+ const nframes_t nframes);
+
+void
+metronome_free (
+  Metronome * self);
 
 /**
  * @}

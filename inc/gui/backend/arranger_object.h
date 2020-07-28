@@ -85,6 +85,8 @@ arranger_object_type_strings[] =
 {
   { "None",
     ARRANGER_OBJECT_TYPE_NONE },
+  { "All",
+    ARRANGER_OBJECT_TYPE_ALL },
   { "Region",
     ARRANGER_OBJECT_TYPE_REGION },
   { "MidiNote",
@@ -242,15 +244,54 @@ typedef struct ArrangerObject
    * part of a region. */
   RegionIdentifier   region_id;
 
+  /**
+   * Whether deleted with delete tool.
+   *
+   * This is used to simply hide these objects
+   * until the action finishes so that they can
+   * be cloned for the actions.
+   */
+  bool               deleted_temporarily;
+
   /** 1 when hovering over the object. */
   //int                hover;
 
-  /** Set to 1 to redraw. */
-  //int                redraw;
+  /* ---- The following should only be used for
+   * objects that really need caching, such as
+   * audio regions ---- */
 
-  /** Cached drawing. */
-  //cairo_t *          cached_cr;
-  //cairo_surface_t *  cached_surface;
+  /**
+   * Set to true to blit the cached surface, false
+   * to redraw.
+   *
+   * @note This is only used if \ref
+   *   ArrangerObject.can_cache_drawing is true.
+   */
+  bool               use_cache;
+
+  /**
+   * Cached cairo_t.
+   *
+   * Has 2 elements in case the object needs to
+   * draw more than 1 copy (such as lane/track
+   * regions).
+   *
+   * @note This is only used if \ref
+   *   ArrangerObject.can_cache_drawing is true.
+   */
+  cairo_t *          cached_cr[2];
+
+  /**
+   * Cached surface containing drawing.
+   *
+   * Has 2 elements in case the object needs to
+   * draw more than 1 copy (such as lane/track
+   * regions).
+   *
+   * @note This is only used if \ref
+   *   ArrangerObject.can_cache_drawing is true.
+   */
+  cairo_surface_t *  cached_surface[2];
 } ArrangerObject;
 
 static const cyaml_schema_field_t
@@ -349,6 +390,18 @@ static const cyaml_schema_value_t
    (_obj)->type == ARRANGER_OBJECT_TYPE_MIDI_NOTE || \
    (_obj)->type == ARRANGER_OBJECT_TYPE_CHORD_OBJECT || \
    (_obj)->type == ARRANGER_OBJECT_TYPE_AUTOMATION_POINT)
+
+/** Whether or not this object supports cached
+ * drawing.
+ * FIXME off for now. */
+#define arranger_object_can_cache_drawing(_obj) \
+  (false)
+
+#if 0
+  ((_obj)->type == ARRANGER_OBJECT_TYPE_REGION && \
+    region_type_can_fade ( \
+      ((ZRegion *) _obj)->id.type))
+#endif
 
 /**
  * Gets the arranger for this arranger object.
@@ -696,13 +749,16 @@ arranger_object_free (
  * @param left 1 to resize left side, 0 to resize
  *   right side.
  * @param ticks Number of ticks to resize.
+ * @param during_ui_action Whether this is called
+ *   during a UI action (not at the end).
  */
 void
 arranger_object_resize (
   ArrangerObject *         self,
   const int                left,
   ArrangerObjectResizeType type,
-  const double             ticks);
+  const double             ticks,
+  bool                     during_ui_action);
 
 /**
  * Adds the given ticks to each included object.

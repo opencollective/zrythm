@@ -26,6 +26,7 @@
 #include "gui/widgets/track_top_grid.h"
 #include "project.h"
 #include "utils/cairo.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -43,6 +44,11 @@ live_waveform_draw_cb (
   cairo_t *         cr,
   LiveWaveformWidget * self)
 {
+  if (!PROJECT || !AUDIO_ENGINE)
+    {
+      return false;
+    }
+
   GtkStyleContext * context =
     gtk_widget_get_style_context (widget);
 
@@ -98,7 +104,8 @@ live_waveform_draw_cb (
   size_t read_space_avail =
     zix_ring_read_space (port->audio_ring);
   size_t blocks_to_read =
-    read_space_avail / size;
+    size == 0 ?
+      0 : read_space_avail / size;
   /* if buffer is not filled do not draw */
   if (blocks_to_read <= 0)
     return FALSE;

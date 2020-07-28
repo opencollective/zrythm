@@ -7,9 +7,9 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Zrythm 0.5\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2020-05-09 17:47+0100\n"
-"PO-Revision-Date: 2019-09-14 11:24+0000\n"
-"Last-Translator: Olivier Humbert <trebmuh@tuxfamily.org>\n"
+"POT-Creation-Date: 2020-07-09 18:46+0100\n"
+"PO-Revision-Date: 2020-06-05 11:41+0000\n"
+"Last-Translator: Sahaathyva <sahaa.thyva@laposte.net>\n"
 "Language: fr\n"
 "Language-Team: French <https://hosted.weblate.org/projects/zrythm"
 "/manualplayback-and-recording/fr/>\n"
@@ -183,8 +183,8 @@ msgstr "Tête de lecture"
 #: ../../playback-and-recording/overview.rst:13
 #, fuzzy
 msgid ""
-"The playhead is the current position in the song. It is displayed as a "
-"red line inside arrangers."
+"The :dfn:`playhead` is the current position in the song. It is displayed "
+"as a red line inside arrangers."
 msgstr "La tête de lecture est la position actuelle dans le morceau."
 
 #: ../../playback-and-recording/overview.rst:18
@@ -252,7 +252,7 @@ msgstr ""
 
 #: ../../playback-and-recording/recording.rst:37
 msgid "Latch"
-msgstr ""
+msgstr "Relâcher"
 
 #: ../../playback-and-recording/recording.rst:42
 msgid ""
@@ -262,7 +262,7 @@ msgstr ""
 
 #: ../../playback-and-recording/recording.rst:46
 msgid "Touch"
-msgstr ""
+msgstr "Toucher"
 
 #: ../../playback-and-recording/recording.rst:51
 msgid ""

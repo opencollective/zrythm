@@ -309,6 +309,9 @@ Args:
            '("select-normal" "select-stretch"
              "edit" "cut" "erase" "ramp"
              "audition"))
+         (print-enum
+           "graphic-detail"
+           '("high" "normal" "low"))
          (newline)
 
          ;; -- print normal schemas --
@@ -459,6 +462,10 @@ Args:
                  "genre" "s" "Electronic"
                  "Genre"
                  "Genre to use when exporting, if the file type supports it.")
+               (make-schema-key
+                 "artist" "s" "Zrythm"
+                 "Artist"
+                 "Artist to use when exporting, if the file type supports it.")
                (make-schema-key-with-enum
                  "time-range" "export-time-range"
                  "song"
@@ -738,6 +745,11 @@ Args:
                    (make-schema-key
                      "info" "ai" "[5,0]"
                      "UI" "General")
+                   (make-schema-key-with-enum
+                     "graphic-detail"
+                     "graphic-detail" "high"
+                     "Draw detail"
+                     "Level of detail to use when drawing graphics.")
                    (make-schema-key-with-enum
                      "language" "language"
                      "en"

@@ -41,22 +41,16 @@ typedef struct Position Position;
  * @{
  */
 
-#define UI_CACHES (ZRYTHM->ui_caches)
+#define UI_CACHES (zrythm_app->ui_caches)
 #define UI_COLORS (&UI_CACHES->colors)
 
 /* FIXME remove these and use theme */
 #define UI_COLOR_DARK_TEXT "#323232"
 #define UI_COLOR_BRIGHT_TEXT "#cdcdcd"
-#define UI_COLOR_BRIGHT_ORANGE "#F79616"
-#define UI_COLOR_DARK_ORANGE "#D68A0C"
 #define UI_COLOR_YELLOW "#F9CA1B"
 #define UI_COLOR_PURPLE "#9D3955"
 #define UI_COLOR_BUTTON_NORMAL "#343434"
 #define UI_COLOR_BUTTON_HOVER "#444444"
-#define UI_COLOR_BUTTON_TOGGLED \
-  UI_COLOR_BRIGHT_ORANGE
-#define UI_COLOR_BUTTON_ACTIVE \
-  UI_COLOR_BRIGHT_ORANGE
 #define UI_COLOR_RECORD_CHECKED "#ED2939"
 #define UI_COLOR_RECORD_ACTIVE "#FF2400"
 #define UI_COLOR_HIGHLIGHT_SCALE "#662266"
@@ -69,12 +63,35 @@ static const GdkRGBA UI_COLOR_BLACK = {
   0, 0, 0, 1
 };
 
+typedef enum UiDetail
+{
+  UI_DETAIL_HIGH,
+  UI_DETAIL_NORMAL,
+  UI_DETAIL_LOW,
+} UiDetail;
+
+static const char * ui_detail_str[] =
+{
+  __("High"),
+  __("Normal"),
+  __("Low"),
+};
+
+static inline const char *
+ui_detail_to_string (
+  UiDetail detail)
+{
+  return ui_detail_str[detail];
+}
+
 /**
  * Commonly used UI colors.
  */
 typedef struct UiColors
 {
   GdkRGBA       dark_text;
+  GdkRGBA       dark_orange;
+  GdkRGBA       bright_orange;
   GdkRGBA       bright_text;
   GdkRGBA       matcha;
   GdkRGBA       bright_green;
@@ -179,7 +196,8 @@ typedef struct UiCaches
   char * text = g_strdup (msg); \
   g_message (msg); \
   g_idle_add ((GSourceFunc) ui_show_notification_idle_func, \
-              (void *) text)
+              (void *) text); \
+  g_free (text)
 
 /**
  * Wrapper to show error message so that no casting
@@ -304,7 +322,7 @@ typedef enum UiDragMode
 #define ui_set_cut_clip_cursor(widget) \
   ui_set_cursor_from_icon_name ( \
     GTK_WIDGET (widget), \
-    "cut-clip", 9, 6);
+    "cutter", 9, 6);
 
 #define ui_set_eraser_cursor(widget) \
   ui_set_cursor_from_icon_name ( \
@@ -465,6 +483,9 @@ ui_get_hit_child (
   double         y, ///< y in parent space
   GType          type); ///< type to look for
 
+UiDetail
+ui_get_detail_level (void);
+
 /**
  * Converts from pixels to position.
  *
@@ -532,6 +553,21 @@ ui_px_to_pos_editor (
   double            px,
   Position *        pos,
   int               has_padding);
+
+/**
+ * Converts RGB to hex string.
+ */
+void
+ui_rgb_to_hex (
+  double red,
+  double green,
+  double blue,
+  char * buf);
+
+void
+ui_gdk_rgba_to_hex (
+  GdkRGBA * color,
+  char *    buf);
 
 /**
  * Shows a notification in the revealer.
@@ -723,6 +759,10 @@ ui_get_normalized_draggable_value (
 
 UiCaches *
 ui_caches_new (void);
+
+void
+ui_caches_free (
+  UiCaches * self);
 
 /**
  * @}

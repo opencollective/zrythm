@@ -22,14 +22,19 @@
 #include "audio/channel.h"
 #include "audio/midi_file.h"
 #include "audio/midi_region.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/supported_file.h"
 #include "audio/tracklist.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/main_window.h"
 #include "project.h"
+#include "settings/settings.h"
+#include "utils/err_codes.h"
 #include "utils/flags.h"
 #include "utils/io.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <ext/midilib/src/midifile.h>
 
@@ -39,32 +44,31 @@
  * @param add_to_project Used when the track to
  *   create is meant to be used in the project (ie
  *   not one of the tracks in CreateTracksAction.
+ *
+ * @return Non-zero if error.
  */
 static int
 create (
   CreateTracksAction * self,
-  int                  idx,
-  int                  add_to_project)
+  int                  idx)
 {
   Track * track;
-  int pos = self->pos + idx;
+  int pos = self->track_pos + idx;
 
   if (self->is_empty)
     {
-      char * tmp =
+      const char * track_type_str =
         track_stringize_type (self->type);
-      char * label;
-      label =
-        g_strdup_printf (_("%s Track"), tmp);
-      g_free (tmp);
+      char label[600];
+      sprintf (
+        label, _("%s Track"), track_type_str);
 
       track =
         track_new (
           self->type, pos, label, F_WITH_LANE);
-      if (add_to_project)
-        tracklist_insert_track (
-          TRACKLIST, track, pos,
-          F_NO_PUBLISH_EVENTS, F_NO_RECALC_GRAPH);
+      tracklist_insert_track (
+        TRACKLIST, track, pos,
+        F_NO_PUBLISH_EVENTS, F_NO_RECALC_GRAPH);
     }
   else // track is not empty
     {
@@ -106,8 +110,10 @@ create (
           pl=
             plugin_new_from_descr (
               &self->pl_descr, track->pos, 0);
+          g_return_val_if_fail (
+            pl, ERR_PLUGIN_INSTANTIATION_FAILED);
 
-          if (plugin_instantiate (pl) < 0)
+          if (plugin_instantiate (pl, true, NULL) < 0)
             {
               char * message =
                 g_strdup_printf (
@@ -121,21 +127,26 @@ create (
                   message);
               g_free (message);
               plugin_free (pl);
-              return -1;
+              g_return_val_if_fail (
+                pl, ERR_PLUGIN_INSTANTIATION_FAILED);
             }
+
+          /* activate */
+          g_return_val_if_fail (
+            plugin_activate (pl, F_ACTIVATE) == 0,
+            -1);
         }
 
-      if (add_to_project)
-        tracklist_insert_track (
-          TRACKLIST, track, track->pos,
-          F_NO_PUBLISH_EVENTS, F_NO_RECALC_GRAPH);
+      tracklist_insert_track (
+        TRACKLIST, track, track->pos,
+        F_NO_PUBLISH_EVENTS, F_NO_RECALC_GRAPH);
 
       if (track->channel && pl)
         {
           channel_add_plugin (
             track->channel,
-            self->pl_descr.category ==
-              PC_INSTRUMENT ?
+            plugin_descriptor_is_instrument (
+              &self->pl_descr) ?
                 PLUGIN_SLOT_INSTRUMENT :
                 PLUGIN_SLOT_INSERT,
             pl->id.slot, pl,
@@ -149,25 +160,16 @@ create (
         {
           /* create an audio region & add to
            * track */
-          Position start_pos;
-          /* FIXME need to pass a position when
-           * creating this action, and the position
-           * should be used here to place the
-           * audio region to, but for now
-           * assume all audio clips are
-           * instantiated at 1.1.1.0 */
-          position_init (&start_pos);
           ZRegion * ar =
             audio_region_new (
-              add_to_project ? self->pool_id : -1,
-              add_to_project ?
-                NULL :
-                self->file_descr->abs_path,
+              self->pool_id,
+              self->pool_id == -1 ?
+                self->file_descr->abs_path :
+                NULL,
               NULL, 0, 0,
-              &start_pos, pos, 0, 0);
-          if (!add_to_project)
-            self->pool_id =
-              ar->pool_id;
+              &self->pos, pos, 0, 0);
+          self->pool_id =
+            ar->pool_id;
           track_add_region (
             track, ar, NULL, 0, F_GEN_NAME,
             F_PUBLISH_EVENTS);
@@ -202,8 +204,7 @@ create (
       if (pl && ZRYTHM_HAVE_UI &&
           g_settings_get_boolean (
             S_P_PLUGINS_UIS,
-            "open-on-instantiate") &&
-          add_to_project)
+            "open-on-instantiate"))
         {
           pl->visible = 1;
           EVENTS_PUSH (
@@ -224,7 +225,8 @@ create_tracks_action_new (
   TrackType          type,
   const PluginDescriptor * pl_descr,
   SupportedFile *    file,
-  int                pos,
+  int                track_pos,
+  Position *         pos,
   int                num_tracks)
 {
   CreateTracksAction * self =
@@ -247,8 +249,13 @@ create_tracks_action_new (
     {
       self->is_empty = 1;
     }
-  self->pos = pos;
+  self->track_pos = track_pos;
   self->type = type;
+  self->pool_id = -1;
+  if (pos)
+    {
+      position_set_to_pos (&self->pos, pos);
+    }
 
   /* calculate number of tracks */
   if (file && type == TRACK_TYPE_MIDI)
@@ -261,11 +268,6 @@ create_tracks_action_new (
     {
       self->num_tracks = num_tracks;
     }
-  for (int i = 0; i < num_tracks; i++)
-    {
-      /* create clones for reference */
-      create (self, i, 0);
-    }
 
   return ua;
 }
@@ -277,15 +279,15 @@ create_tracks_action_do (
   int ret;
   for (int i = 0; i < self->num_tracks; i++)
     {
-      ret = create (self, i, 1);
-      g_return_val_if_fail (!ret, -1);
+      ret = create (self, i);
+      g_return_val_if_fail (ret == 0, ret);
 
       /* TODO select each plugin that was selected */
     }
 
   EVENTS_PUSH (ET_TRACKS_ADDED, NULL);
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   return 0;
 }
@@ -301,7 +303,7 @@ create_tracks_action_undo (
   for (int i = self->num_tracks - 1; i >= 0; i--)
     {
       track =
-        TRACKLIST->tracks[self->pos + i];
+        TRACKLIST->tracks[self->track_pos + i];
       g_return_val_if_fail (track, -1);
 
       tracklist_remove_track (
@@ -313,7 +315,7 @@ create_tracks_action_undo (
 
   EVENTS_PUSH (ET_TRACKS_REMOVED, NULL);
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   return 0;
 }
@@ -322,9 +324,8 @@ char *
 create_tracks_action_stringize (
   CreateTracksAction * self)
 {
-  char * type =
-    track_stringize_type (
-      self->type);
+  const char * type =
+    track_stringize_type (self->type);
   char * ret;
   if (self->num_tracks == 1)
     ret = g_strdup_printf (
@@ -333,8 +334,6 @@ create_tracks_action_stringize (
     ret = g_strdup_printf (
       _("Create %d %s Tracks"),
       self->num_tracks, type);
-
-  g_free (type);
 
   return ret;
 }

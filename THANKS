@@ -20,6 +20,7 @@ Thanks:
    * Help and advice
    * Routing algorithm
    * Latency compensation algorithm
+   * Meter algorithms
  David Robillard
    * A lot of useful code we borrowed
  The GTK team
@@ -36,6 +37,7 @@ Thanks:
    * Many icons we use
  Paul Davis
    * Useful code we borrowed from Ardour
+   * JACK
  unfa
    * Testing, ideas, bug reports
    * Promoting Zrythm
@@ -51,6 +53,10 @@ Thanks:
  dreamer
    * Multiple bug reports
    * Helping with debugging
+ Carlos Han (C.K. Design)
+   * Zrythm logo design
+ jxself
+   * Help and advice regarding GPL issues
 
 ----
 

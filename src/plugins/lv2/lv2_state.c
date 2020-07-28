@@ -30,6 +30,10 @@
 #include "plugins/lv2/lv2_ui.h"
 #include "plugins/plugin_manager.h"
 #include "project.h"
+#include "utils/datetime.h"
+#include "utils/flags.h"
+#include "utils/objects.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -38,74 +42,146 @@
 #define NS_RDFS "http://www.w3.org/2000/01/rdf-schema#"
 #define NS_XSD  "http://www.w3.org/2001/XMLSchema#"
 
+#define STATE_FILENAME "state.ttl"
+
+/**
+ * LV2 State makePath feature for save only.
+ *
+ * Should be passed to LV2_State_Interface::save().
+ * and this function must return an absolute path.
+ */
 char *
-lv2_state_make_path (
+lv2_state_make_path_save (
   LV2_State_Make_Path_Handle handle,
   const char*                path)
 {
-  Lv2Plugin* plugin = (Lv2Plugin*)handle;
+  Lv2Plugin * pl = (Lv2Plugin *) handle;
+  g_return_val_if_fail (IS_LV2_PLUGIN (pl), NULL);
 
-  // Create in save directory if saving, otherwise use temp directory
-  return
-    g_strjoin (
-      NULL,
-      plugin->save_dir ?
-        plugin->save_dir :
-        plugin->temp_dir,
-      path, NULL);
+  char * full_path =
+    plugin_get_abs_state_dir (
+      pl->plugin, F_NOT_BACKUP);
+
+  /* make sure the path is absolute */
+  g_warn_if_fail (g_path_is_absolute (full_path));
+
+  char * ret =
+    g_build_filename (full_path, path, NULL);
+
+  g_free (full_path);
+
+  return ret;
 }
 
-static const void*
-get_port_value (
-  const char* port_symbol,
-  void*       user_data,
-  uint32_t*   size,
-  uint32_t*   type)
+/**
+ * LV2 State makePath feature for temporary files.
+ *
+ * Should be passed to LV2_Descriptor::instantiate()
+ * and this function must return an absolute path.
+ */
+char *
+lv2_state_make_path_temp (
+  LV2_State_Make_Path_Handle handle,
+  const char*                path)
 {
-  Lv2Plugin*        plugin = (Lv2Plugin*)user_data;
-  Lv2Port* port =
-    lv2_port_get_by_symbol (
-      plugin, port_symbol);
-  if (port &&
-      port->port->id.flow == FLOW_INPUT &&
-      port->port->id.type == TYPE_CONTROL)
+  Lv2Plugin * pl = (Lv2Plugin *) handle;
+  g_return_val_if_fail (IS_LV2_PLUGIN (pl), NULL);
+
+  /* if plugin already has a state dir, use it,
+   * otherwise create it */
+  if (!pl->temp_dir)
     {
-      *size = sizeof(float);
-      *type = plugin->forge.Float;
-      g_return_val_if_fail (port->port, NULL);
-      return &port->port->control;
+      GError * err = NULL;
+      pl->temp_dir =
+        g_dir_make_tmp ("XXXXXX", &err);
+      if (err)
+        {
+          g_critical (
+            "An error occurred making a temp dir");
+          return NULL;
+        }
     }
-  *size = *type = 0;
-  return NULL;
+
+  return
+    g_build_filename (pl->temp_dir, path, NULL);
 }
 
-void
-lv2_state_save (
-  Lv2Plugin*  plugin,
-  const char* dir)
+/**
+ * Saves the plugin state to the filesystem and
+ * returns the state.
+ */
+LilvState *
+lv2_state_save_to_file (
+  Lv2Plugin *  pl,
+  bool         is_backup)
 {
-  plugin->save_dir =
-    g_strjoin (NULL, dir, "/", NULL);
+  g_return_val_if_fail (
+    pl && pl->plugin->instantiated &&
+    pl->instance, NULL);
+
+  char * abs_state_dir =
+    plugin_get_abs_state_dir (pl->plugin, is_backup);
+  char * copy_dir =
+    project_get_path (
+      PROJECT, PROJECT_PATH_PLUGIN_EXT_COPIES,
+      false);
+  char * link_dir =
+    project_get_path (
+      PROJECT, PROJECT_PATH_PLUGIN_EXT_LINKS,
+      false);
 
   LilvState* const state =
     lilv_state_new_from_instance (
-      plugin->lilv_plugin, plugin->instance,
-      &plugin->map,
-      plugin->temp_dir, dir, dir, dir,
-      get_port_value, plugin,
-      LV2_STATE_IS_POD|LV2_STATE_IS_PORTABLE,
-      NULL);
+      pl->lilv_plugin, pl->instance,
+      &pl->map,
+      pl->temp_dir, copy_dir, link_dir,
+      abs_state_dir,
+      lv2_plugin_get_port_value, pl,
+      LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE,
+      pl->state_features);
 
-  lilv_state_save (
-    LILV_WORLD, &plugin->map, &plugin->unmap,
-    state, NULL, dir, "state.ttl");
+  int rc =
+    lilv_state_save (
+      LILV_WORLD, &pl->map, &pl->unmap,
+      state, NULL, abs_state_dir, STATE_FILENAME);
+  if (rc)
+    {
+      g_critical ("Lilv save state failed");
+      return NULL;
+    }
 
-  lilv_state_free (state);
+  g_message (
+    "Lilv state saved to %s", pl->plugin->state_dir);
 
-  g_free (plugin->save_dir);
-  plugin->save_dir = NULL;
+  return state;
 }
 
+/**
+ * Saves the plugin state into a new LilvState that
+ * can be applied to any plugin with the same URI
+ * (like clones).
+ *
+ * Must be free'd with lilv_state_free().
+ */
+LilvState *
+lv2_state_save_to_memory (
+  Lv2Plugin * plugin)
+{
+  LilvState * state =
+    lilv_state_new_from_instance (
+      plugin->lilv_plugin, plugin->instance,
+      &plugin->map,
+      plugin->temp_dir, NULL, NULL, NULL,
+      lv2_plugin_get_port_value, plugin,
+      LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE,
+      plugin->state_features);
+
+  g_message (
+    "Lilv state saved to memory for plugin %s",
+    plugin->plugin->descr->name);
+
+  return state;
+}
 
 static void
 set_port_value (
@@ -115,13 +191,14 @@ set_port_value (
   uint32_t    size,
   uint32_t    type)
 {
-  Lv2Plugin*        plugin = (Lv2Plugin*)user_data;
+  Lv2Plugin * plugin = (Lv2Plugin*)user_data;
   Lv2Port* port =
-    lv2_port_get_by_symbol (
-      plugin, port_symbol);
-  if (!port) {
-          fprintf(stderr, "error: Preset port `%s' is missing\n", port_symbol);
-          return;
+    lv2_port_get_by_symbol (plugin, port_symbol);
+  if (!port)
+    {
+      g_critical (
+        "Preset port %s is missing", port_symbol);
+      return;
   }
 
   float fvalue;
@@ -136,12 +213,15 @@ set_port_value (
   else
     {
       g_warning (
-        "Preset `%s' value has bad type <%s>\n",
+        "Preset `%s' value has bad type <%s>",
         port_symbol,
         plugin->unmap.unmap (
           plugin->unmap.handle, type));
       return;
     }
+  g_message (
+    "(lv2 state): setting %s=%f...",
+    port_symbol, (double) fvalue);
 
   if (TRANSPORT->play_state != PLAYSTATE_ROLLING)
     {
@@ -157,11 +237,12 @@ set_port_value (
   if (plugin->plugin->visible)
     {
       // Update UI
-      char buf[sizeof(Lv2ControlChange) + sizeof(fvalue)];
+      char buf[sizeof (Lv2ControlChange) +
+        sizeof (fvalue)];
       Lv2ControlChange* ev = (Lv2ControlChange*)buf;
-      ev->index    = port->index;
+      ev->index = port->index;
       ev->protocol = 0;
-      ev->size     = sizeof(fvalue);
+      ev->size = sizeof(fvalue);
       *(float*)ev->body = fvalue;
       zix_ring_write (
         plugin->plugin_to_ui_events, buf,
@@ -174,27 +255,30 @@ lv2_state_apply_state (
   Lv2Plugin* plugin,
   LilvState* state)
 {
-  bool must_pause = !plugin->safe_restore && TRANSPORT->play_state == PLAYSTATE_ROLLING;
+  bool must_pause =
+    !plugin->safe_restore &&
+    TRANSPORT->play_state == PLAYSTATE_ROLLING;
   if (state)
     {
       if (must_pause)
         {
           g_message ("must pause");
-          /*TRANSPORT->play_state = PLAYSTATE_PAUSE_REQUESTED;*/
+          TRANSPORT->play_state =
+            PLAYSTATE_PAUSE_REQUESTED;
+          g_usleep (10000);
           /*zix_sem_wait(&TRANSPORT->paused);*/
         }
 
       g_message ("applying state...");
-      lilv_state_restore (state,
-                          plugin->instance,
-                          set_port_value, plugin,
-                          0,
-                          plugin->state_features);
+      lilv_state_restore (
+        state, plugin->instance,
+        set_port_value, plugin, 0,
+        plugin->state_features);
 
       if (must_pause)
         {
           plugin->request_update = true;
-          TRANSPORT->play_state     = PLAYSTATE_ROLLING;
+          TRANSPORT->play_state = PLAYSTATE_ROLLING;
         }
     }
 }
@@ -223,19 +307,24 @@ lv2_state_save_preset (
   const char * label,
   const char * filename)
 {
-  LilvState* const state = lilv_state_new_from_instance(
-          plugin->lilv_plugin, plugin->instance, &plugin->map,
-          plugin->temp_dir, dir, dir, dir,
-          get_port_value, plugin,
-          LV2_STATE_IS_POD|LV2_STATE_IS_PORTABLE, NULL);
+  LilvState* const state =
+    lilv_state_new_from_instance (
+      plugin->lilv_plugin, plugin->instance,
+      &plugin->map,
+      plugin->temp_dir, dir, dir, dir,
+      lv2_plugin_get_port_value, plugin,
+      LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE,
+      NULL);
 
   if (label)
     {
-      lilv_state_set_label(state, label);
+      lilv_state_set_label (state, label);
     }
 
-  int ret = lilv_state_save(
-          LILV_WORLD, &plugin->map, &plugin->unmap, state, uri, dir, filename);
+  int ret =
+    lilv_state_save (
+      LILV_WORLD, &plugin->map, &plugin->unmap,
+      state, uri, dir, filename);
 
   lilv_state_free(plugin->preset);
   plugin->preset = state;

@@ -11,6 +11,7 @@ os:
   - osx
   - linux
 dist: bionic
+python: 3.8
 
 before_install:
 - |-
@@ -25,7 +26,7 @@ before_install:
       export msys2+='& C:\\tools\\msys64\\msys2_shell.cmd -defterm -no-start'
       export mingw64="$msys2 -mingw64 -full-path -here -c \$\* --"
       export msys2+=" -msys2 -c \$\* --"
-      $msys2 pacman --sync --noconfirm --needed mingw-w64-x86_64-toolchain mingw-w64-x86_64-gtk3 mingw-w64-x86_64-meson mingw-w64-x86_64-libsamplerate mingw-w64-x86_64-fftw mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-libyaml mingw-w64-x86_64-libsndfile mingw-w64-x86_64-rubberband mingw-w64-x86_64-dlfcn mingw-w64-x86_64-SDL2 mingw-w64-x86_64-chromaprint guile libguile-devel mingw-w64-x86_64-gtksourceview3 mingw-w64-x86_64-graphviz
+      $msys2 pacman --sync --noconfirm --needed mingw-w64-x86_64-toolchain mingw-w64-x86_64-gtk3 mingw-w64-x86_64-meson mingw-w64-x86_64-libsamplerate mingw-w64-x86_64-fftw mingw-w64-x86_64-ffmpeg mingw-w64-x86_64-libyaml mingw-w64-x86_64-libsndfile mingw-w64-x86_64-rubberband mingw-w64-x86_64-dlfcn mingw-w64-x86_64-SDL2 mingw-w64-x86_64-chromaprint guile libguile-devel mingw-w64-x86_64-gtksourceview3 mingw-w64-x86_64-graphviz mingw-w64-x86_64-zstd
       ## Install more MSYS2 packages from https://packages.msys2.org/base here
       taskkill //IM gpg-agent.exe //F || true # https://travis-ci.community/t/4967
       export PATH=/C/tools/msys64/mingw64/bin:$PATH
@@ -34,37 +35,31 @@ before_install:
     osx)
       brew update
       # use || true because it returns 1
-      brew install fftw meson libsamplerate sdl2 chromaprint libgtop lilv librsvg gtk+3 guile gtksourceview4 graphviz || true
+      brew install fftw meson libsamplerate sdl2 chromaprint libgtop lilv librsvg gtk+3 guile gtksourceview4 graphviz zstd mda-lv2 || true
       brew link --overwrite python
+      # move mda to official path
+      sudo mkdir -p /Library/Audio/Plug-Ins/LV2/mda.lv2
+      for file in $(brew ls mda-lv2 | grep "mda\.lv2" | cut -d " " -f1); do sudo cp "$file" /Library/Audio/Plug-Ins/LV2/mda.lv2/ ; done
       ;;
     linux)
-      sudo apt-get install -y libgtk-3-dev libjack-dev libsndfile1-dev ninja-build gettext sed help2man python3-sphinx ladspa-sdk libfftw3-dev libasound2-dev libavcodec-dev libavutil-dev libavformat-dev libchromaprint-dev libsamplerate0-dev libyaml-dev librubberband-dev python3 xdg-utils git lcov guile-2.2-dev libgtksourceview-3.0-dev libgraphviz-dev
-      git clone https://github.com/mesonbuild/meson /tmp/meson
-      pip install --user gcovr cpp-coveralls
+      sudo apt-get install -y libgtk-3-dev libjack-dev libsndfile1-dev ninja-build gettext sed help2man python3-sphinx ladspa-sdk libfftw3-dev libasound2-dev libavcodec-dev libavutil-dev libavformat-dev libchromaprint-dev libsamplerate0-dev libyaml-dev librubberband-dev python3 xdg-utils git lcov guile-2.2-dev libgtksourceview-3.0-dev libgraphviz-dev libzstd-dev python3 python3-pip python3-setuptools liblilv-dev lilv-utils lv2-dev
+      # kxstudio repos
+      sudo apt-get install -y apt-transport-https gpgv
+      wget https://launchpad.net/~kxstudio-debian/+archive/kxstudio/+files/kxstudio-repos_10.0.3_all.deb
+      sudo dpkg -i kxstudio-repos_10.0.3_all.deb
+      sudo apt-get update
+      sudo apt-get install -y helm
+      pip3 install --user gcovr cpp-coveralls
+      pip3 install --user 'meson==0.53.0' --force-reinstall
       ;;
   esac
-
-before_cache:
-- |-
-  set -e
-  case $TRAVIS_OS_NAME in
-    windows)
-      # https://unix.stackexchange.com/a/137322/107554
-      $msys2 pacman --sync --clean --noconfirm
-      ;;
-  esac
-
-cache:
-  directories:
-  - $HOME/AppData/Local/Temp/chocolatey
-  - /C/tools/msys64
 
 script:
 - |-
   set -e
   case $TRAVIS_OS_NAME in
     osx)
-      meson build -Dsdl=enabled -Drtaudio=auto -Drtmidi=auto -Denable-tests=true
+      meson build -Dsdl=enabled -Drtaudio=auto -Drtmidi=auto -Dtests=true -Dmanpage=false
       ninja -C build
       ninja -C build test
       sudo ninja -C build install
@@ -74,13 +69,17 @@ script:
       $mingw64 sed -i -e '27s/false/true/' meson_options.txt
       # hack to enable sdl
       $mingw64 sed -i -e '63s/disabled/enabled/' meson_options.txt
+      # hack to disable manpage
+      $mingw64 sed -i -e '93s/true/false/' meson_options.txt
+      # hack to fix translator generation
+      $mingw64 sed -i -e '94s/translator/"invalid"/' scripts/gen-translators-list.scm
       $mingw64 meson build
       $mingw64 ninja -C build
       $mingw64 ninja -C build test
       $mingw64 ninja -C build install
       ;;
     linux)
-      /tmp/meson/meson.py build -Denable-tests=true -Db_coverage=true
+      meson build -Dtests=true -Db_coverage=true
       ninja -C build
       ninja -C build test
       ninja -C build coverage-text

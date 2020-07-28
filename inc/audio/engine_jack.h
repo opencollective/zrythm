@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_JACK
 
@@ -83,8 +83,7 @@ engine_jack_fill_out_bufs (
  */
 int
 engine_jack_midi_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 /**
  * Sets up the audio engine to use jack.
@@ -93,8 +92,7 @@ engine_jack_midi_setup (
  */
 int
 engine_jack_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 /**
  * Copies the error message corresponding to \p
  * status in \p msg.
@@ -110,7 +108,8 @@ engine_jack_tear_down (
 
 int
 engine_jack_activate (
-  AudioEngine * self);
+  AudioEngine * self,
+  bool          activate);
 
 /**
  * Returns the JACK type string.

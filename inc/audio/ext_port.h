@@ -26,11 +26,9 @@
  * External ports.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
-#include "audio/automatable.h"
 #include "audio/fader.h"
-#include "audio/passthrough_processor.h"
 #include "plugins/plugin.h"
 #include "utils/audio.h"
 #include "utils/types.h"
@@ -39,7 +37,7 @@
 #include <gdk/gdk.h>
 
 #ifdef HAVE_JACK
-#include <jack/jack.h>
+#include "weak_libjack.h"
 #endif
 
 #ifdef HAVE_RTMIDI

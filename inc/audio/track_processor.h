@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2019-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -115,6 +115,8 @@ typedef struct TrackProcessor
 
   /** Pointer to parent track. */
   Track *          track;
+
+  bool             is_project;
 } TrackProcessor;
 
 static const cyaml_schema_field_t
@@ -157,17 +159,20 @@ track_processor_schema =
  */
 void
 track_processor_init_loaded (
-  TrackProcessor * self);
+  TrackProcessor * self,
+  bool             is_project);
+
+void
+track_processor_set_is_project (
+  TrackProcessor * self,
+  bool             is_project);
 
 /**
- * Inits the TrackProcessor to default values.
- *
- * @param self The TrackProcessor to init.
- * @param track The owner Track.
+ * Creates a new track processor for the given
+ * track.
  */
-void
-track_processor_init (
-  TrackProcessor * self,
+TrackProcessor *
+track_processor_new (
   Track *          track);
 
 /**
@@ -246,11 +251,19 @@ track_processor_set_track_pos (
   TrackProcessor * self,
   int              pos);
 
+void
+track_processor_append_ports (
+  TrackProcessor * self,
+  Port ***         ports,
+  int *            size,
+  bool             is_dynamic,
+  int *            max_size);
+
 /**
- * Frees the members of the TrackProcessor.
+ * Frees the TrackProcessor.
  */
 void
-track_processor_free_members (
+track_processor_free (
   TrackProcessor * self);
 
 /**

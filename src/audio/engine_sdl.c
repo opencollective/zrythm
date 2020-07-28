@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_SDL
 
@@ -25,10 +25,12 @@
 #include "audio/engine.h"
 #include "audio/engine_sdl.h"
 #include "audio/master_track.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/port.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -101,8 +103,7 @@ engine_sdl_get_device_names (
  */
 int
 engine_sdl_setup (
-  AudioEngine * self,
-  int           loading)
+  AudioEngine * self)
 {
   g_message ("Setting up SDL...");
 
@@ -181,39 +182,6 @@ engine_sdl_setup (
   g_warn_if_fail (
     TRANSPORT && TRANSPORT->beats_per_bar > 1);
 
-  engine_update_frames_per_tick (
-    self, TRANSPORT->beats_per_bar,
-    TRANSPORT->bpm, self->sample_rate);
-
-  /* create ports */
-  Port * monitor_out_l, * monitor_out_r;
-
-  if (loading)
-    {
-    }
-  else
-    {
-      monitor_out_l =
-        port_new_with_data (
-          INTERNAL_PA_PORT,
-          TYPE_AUDIO,
-          FLOW_OUTPUT,
-          "SDL Stereo Out / L",
-          NULL);
-      monitor_out_r =
-        port_new_with_data (
-          INTERNAL_PA_PORT,
-          TYPE_AUDIO,
-          FLOW_OUTPUT,
-          "SDL Stereo Out / R",
-          NULL);
-
-      self->monitor_out =
-        stereo_ports_new_from_existing (
-          monitor_out_l,
-          monitor_out_r);
-    }
-
   g_message ("SDL set up");
 
   return 0;
@@ -221,12 +189,21 @@ engine_sdl_setup (
 
 void
 engine_sdl_activate (
-  AudioEngine * self)
+  AudioEngine * self,
+  bool          activate)
 {
-  g_message ("Activating SDL...");
+  if (activate)
+    {
+      g_message ("%s: activating...", __func__);
+    }
+  else
+    {
+      g_message ("%s: deactivating...", __func__);
+    }
 
   /* start playing */
-  SDL_PauseAudioDevice (self->dev, 0);
+  SDL_PauseAudioDevice (
+    self->dev, !activate);
 
   switch (SDL_GetAudioDeviceStatus (self->dev))
     {
@@ -245,7 +222,7 @@ engine_sdl_activate (
         break;
     }
 
-  g_message ("SDL activated");
+  g_message ("%s: done", __func__);
 }
 
 /**

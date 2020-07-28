@@ -27,6 +27,7 @@
 #define __UNDO_UNDO_STACK_H__
 
 #include "actions/arranger_selections.h"
+#include "actions/channel_send_action.h"
 #include "actions/copy_plugins_action.h"
 #include "actions/copy_tracks_action.h"
 #include "actions/create_plugins_action.h"
@@ -37,6 +38,8 @@
 #include "actions/edit_tracks_action.h"
 #include "actions/move_plugins_action.h"
 #include "actions/move_tracks_action.h"
+#include "actions/port_connection_action.h"
+#include "actions/transport_action.h"
 #include "utils/stack.h"
 #include "utils/yaml.h"
 
@@ -89,6 +92,10 @@ typedef struct UndoStack
   size_t        num_delete_tracks_actions;
   size_t        delete_tracks_actions_size;
 
+  ChannelSendAction ** channel_send_actions;
+  size_t        num_channel_send_actions;
+  size_t        channel_send_actions_size;
+
   EditPluginsAction ** edit_plugins_actions;
   size_t        num_edit_plugins_actions;
   size_t        edit_plugins_actions_size;
@@ -105,44 +112,61 @@ typedef struct UndoStack
   size_t        num_move_tracks_actions;
   size_t        move_tracks_actions_size;
 
+  PortConnectionAction ** port_connection_actions;
+  size_t        num_port_connection_actions;
+  size_t        port_connection_actions_size;
+
+  TransportAction ** transport_actions;
+  size_t        num_transport_actions;
+  size_t        transport_actions_size;
+
 } UndoStack;
 
 static const cyaml_schema_field_t
   undo_stack_fields_schema[] =
 {
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, as_actions,
     arranger_selections_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, copy_plugins_actions,
     copy_plugins_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, copy_tracks_actions,
     copy_tracks_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, create_plugins_actions,
     create_plugins_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, create_tracks_actions,
     create_tracks_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, delete_plugins_actions,
     delete_plugins_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, delete_tracks_actions,
     delete_tracks_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
+    UndoStack, channel_send_actions,
+    channel_send_action_schema),
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, edit_plugins_actions,
     edit_plugins_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, edit_tracks_actions,
     edit_tracks_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, move_plugins_actions,
     move_plugins_action_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     UndoStack, move_tracks_actions,
     move_tracks_action_schema),
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
+    UndoStack, port_connection_actions,
+    port_connection_action_schema),
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
+    UndoStack, transport_actions,
+    transport_action_schema),
   YAML_FIELD_MAPPING_PTR (
     UndoStack, stack, stack_fields_schema),
 
@@ -205,9 +229,14 @@ undo_stack_pop_last (
 
 /* --- end wrappers --- */
 
+/**
+ * Clears the stack, optionally freeing all the
+ * elements.
+ */
 void
 undo_stack_clear (
-  UndoStack * self);
+  UndoStack * self,
+  bool        free);
 
 /**
  * @}

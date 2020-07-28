@@ -19,13 +19,23 @@
 
 #include "actions/move_plugins_action.h"
 #include "audio/channel.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/mixer_selections.h"
 #include "plugins/plugin.h"
 #include "project.h"
 #include "utils/flags.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
+
+void
+move_plugins_action_init_loaded (
+  MovePluginsAction * self)
+{
+  mixer_selections_init_loaded (self->ms, false);
+}
 
 /**
  * Create a new action.
@@ -54,7 +64,9 @@ move_plugins_action_new (
   else
     self->is_new_channel = 1;
 
-  self->ms = mixer_selections_clone (ms);
+  self->ms =
+    mixer_selections_clone (
+      ms, ms == MIXER_SELECTIONS);
   g_warn_if_fail (
     ms->slots[0] == self->ms->slots[0]);
 
@@ -65,7 +77,7 @@ int
 move_plugins_action_do (
   MovePluginsAction * self)
 {
-  Plugin * pl;
+  Plugin * pl = NULL;
   Channel * from_ch =
     TRACKLIST->tracks[self->from_track_pos]->channel;
   g_return_val_if_fail (from_ch, -1);
@@ -148,8 +160,8 @@ move_plugins_action_do (
 
       /* move and select plugin to to_slot + diff */
       to_slot = self->to_slot + i;
-      mixer_move_plugin (
-        MIXER, pl, to_ch, self->slot_type, to_slot);
+      plugin_move (
+        pl, to_ch, self->slot_type, to_slot);
 
       mixer_selections_add_slot (
         MIXER_SELECTIONS, to_ch, self->slot_type,
@@ -165,8 +177,6 @@ int
 move_plugins_action_undo (
   MovePluginsAction * self)
 {
-  Plugin * pl;
-
   /* get original channel */
   Channel * ch =
     TRACKLIST->tracks[
@@ -185,6 +195,7 @@ move_plugins_action_undo (
   for (int i = 0; i < self->ms->num_slots; i++)
     {
       /* get the actual plugin */
+      Plugin * pl = NULL;
       switch (self->slot_type)
         {
         case PLUGIN_SLOT_MIDI_FX:
@@ -202,9 +213,8 @@ move_plugins_action_undo (
       g_return_val_if_fail (pl, -1);
 
       /* move plugin to its original slot */
-      mixer_move_plugin (
-        MIXER, pl, ch,
-        self->ms->type,
+      plugin_move (
+        pl, ch, self->ms->type,
         self->ms->plugins[i]->id.slot);
 
       /* add to mixer selections */

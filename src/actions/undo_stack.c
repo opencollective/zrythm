@@ -20,8 +20,10 @@
 #include "actions/undo_stack.h"
 #include "settings/settings.h"
 #include "utils/arrays.h"
+#include "utils/objects.h"
 #include "utils/stack.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 void
 undo_stack_init_loaded (
@@ -43,6 +45,7 @@ undo_stack_init_loaded (
         self->sc##_actions[sc##_actions_idx]; \
       UndoableAction * ua = \
         (UndoableAction *) a; \
+      undoable_action_init_loaded (ua); \
       if (self->stack->top + 1 == ua->stack_idx) \
         { \
           STACK_PUSH (self->stack, ua); \
@@ -57,82 +60,47 @@ undo_stack_init_loaded (
   size_t create_tracks_actions_idx = 0;
   size_t delete_plugins_actions_idx = 0;
   size_t delete_tracks_actions_idx = 0;
+  size_t channel_send_actions_idx = 0;
   size_t edit_plugins_actions_idx = 0;
   size_t edit_tracks_actions_idx = 0;
   size_t move_plugins_actions_idx = 0;
   size_t move_tracks_actions_idx = 0;
+  size_t port_connection_actions_idx = 0;
+  size_t transport_actions_idx = 0;
+
+  size_t total_actions =
+    self->num_as_actions +
+    self->num_copy_plugins_actions +
+    self->num_copy_tracks_actions +
+    self->num_create_plugins_actions +
+    self->num_create_tracks_actions +
+    self->num_delete_plugins_actions +
+    self->num_delete_tracks_actions +
+    self->num_channel_send_actions +
+    self->num_edit_plugins_actions +
+    self->num_edit_tracks_actions +
+    self->num_move_plugins_actions +
+    self->num_move_tracks_actions +
+    self->num_port_connection_actions +
+    self->num_transport_actions;
 
   size_t i = 0;
-  while (i < self->num_as_actions ||
-         i < self->num_copy_plugins_actions ||
-         i < self->num_copy_tracks_actions ||
-         i < self->num_create_plugins_actions ||
-         i < self->num_create_tracks_actions ||
-         i < self->num_delete_plugins_actions ||
-         i < self->num_delete_tracks_actions ||
-         i < self->num_edit_plugins_actions ||
-         i < self->num_edit_tracks_actions ||
-         i < self->num_move_plugins_actions ||
-         i < self->num_move_tracks_actions)
+  while (i < total_actions)
     {
-      /* if there are still actions of this type */
-      if (as_actions_idx < self->num_as_actions)
-        {
-          ArrangerSelectionsAction * a =
-            self->as_actions[as_actions_idx];
-          UndoableAction * ua =
-            (UndoableAction *) a;
-
-          if (self->stack->top + 1 == ua->stack_idx)
-            {
-#define DO_SELECTIONS(sc) \
-  if (a->sc##_sel) \
-    { \
-      a->sel = \
-        (ArrangerSelections *) \
-        a->sc##_sel; \
-      a->sel_after = \
-        (ArrangerSelections *) \
-        a->sc##_sel_after; \
-    }
-              DO_SELECTIONS (chord);
-              DO_SELECTIONS (tl);
-              DO_SELECTIONS (ma);
-              DO_SELECTIONS (automation);
-
-              for (int j = 0; j < a->num_split_objs; j++)
-                {
-                  if (a->region_r1[j])
-                    {
-                      a->r1[j] =
-                        (ArrangerObject *)
-                        a->region_r1[j];
-                      a->r2[j] =
-                        (ArrangerObject *)
-                        a->region_r2[j];
-                    }
-                  else if (a->mn_r1[j])
-                    {
-                      a->r1[j] =
-                        (ArrangerObject *) a->mn_r1[j];
-                      a->r2[j] =
-                        (ArrangerObject *) a->mn_r2[j];
-                    }
-                }
-              STACK_PUSH (self->stack, ua);
-              as_actions_idx++;
-            }
-        }
+      DO_SIMPLE (ArrangerSelections, as)
       DO_SIMPLE (CopyPlugins, copy_plugins)
       DO_SIMPLE (CopyTracks, copy_tracks)
       DO_SIMPLE (CreatePlugins, create_plugins)
       DO_SIMPLE (CreateTracks, create_tracks)
       DO_SIMPLE (DeletePlugins, delete_plugins)
       DO_SIMPLE (DeleteTracks, delete_tracks)
+      DO_SIMPLE (ChannelSend, channel_send)
       DO_SIMPLE (EditPlugins, edit_plugins)
       DO_SIMPLE (EditTracks, edit_tracks)
       DO_SIMPLE (MovePlugins, move_plugins)
       DO_SIMPLE (MoveTracks, move_tracks)
+      DO_SIMPLE (PortConnection, port_connection)
+      DO_SIMPLE (Transport, transport)
 
       i++;
     }
@@ -162,6 +130,17 @@ void
 undo_stack_free (
   UndoStack * self)
 {
+  g_message ("%s: freeing...", __func__);
+
+  while (!undo_stack_is_empty (self))
+    {
+      UndoableAction * ua = undo_stack_pop (self);
+      undoable_action_free (ua);
+    }
+
+  object_zero_and_free (self);
+
+  g_message ("%s: done", __func__);
 }
 
 void
@@ -204,6 +183,8 @@ undo_stack_push (
     APPEND_ELEMENT (
       DELETE_TRACKS, DeleteTracks, delete_tracks);
     APPEND_ELEMENT (
+      CHANNEL_SEND, ChannelSend, channel_send);
+    APPEND_ELEMENT (
       CREATE_PLUGINS, CreatePlugins, create_plugins);
     APPEND_ELEMENT (
       MOVE_PLUGINS, MovePlugins, move_plugins);
@@ -213,6 +194,11 @@ undo_stack_push (
       COPY_PLUGINS, CopyPlugins, copy_plugins);
     APPEND_ELEMENT (
       DELETE_PLUGINS, DeletePlugins, delete_plugins);
+    APPEND_ELEMENT (
+      PORT_CONNECTION, PortConnection,
+      port_connection);
+    APPEND_ELEMENT (
+      TRANSPORT, Transport, transport);
     case UA_CREATE_ARRANGER_SELECTIONS:
     case UA_MOVE_ARRANGER_SELECTIONS:
     case UA_LINK_ARRANGER_SELECTIONS:
@@ -265,6 +251,8 @@ remove_action (
     REMOVE_ELEMENT (
       DELETE_TRACKS, DeleteTracks, delete_tracks);
     REMOVE_ELEMENT (
+      CHANNEL_SEND, ChannelSend, channel_send);
+    REMOVE_ELEMENT (
       CREATE_PLUGINS, CreatePlugins, create_plugins);
     REMOVE_ELEMENT (
       MOVE_PLUGINS, MovePlugins, move_plugins);
@@ -274,6 +262,11 @@ remove_action (
       COPY_PLUGINS, CopyPlugins, copy_plugins);
     REMOVE_ELEMENT (
       DELETE_PLUGINS, DeletePlugins, delete_plugins);
+    REMOVE_ELEMENT (
+      PORT_CONNECTION, PortConnection,
+      port_connection);
+    REMOVE_ELEMENT (
+      TRANSPORT, Transport, transport);
     case UA_CREATE_ARRANGER_SELECTIONS:
     case UA_MOVE_ARRANGER_SELECTIONS:
     case UA_LINK_ARRANGER_SELECTIONS:
@@ -333,12 +326,21 @@ undo_stack_pop_last (
   return action;
 }
 
+/**
+ * Clears the stack, optionally freeing all the
+ * elements.
+ */
 void
 undo_stack_clear (
-  UndoStack * self)
+  UndoStack * self,
+  bool        free)
 {
   while (!undo_stack_is_empty (self))
     {
-      undo_stack_pop (self);
+      UndoableAction * ua = undo_stack_pop (self);
+      if (free)
+        {
+          undoable_action_free (ua);
+        }
     }
 }

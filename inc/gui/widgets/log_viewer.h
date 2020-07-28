@@ -26,7 +26,14 @@
 #ifndef __GUI_WIDGETS_LOG_VIEWER_H__
 #define __GUI_WIDGETS_LOG_VIEWER_H__
 
+#include "zrythm-config.h"
+
 #include <gtk/gtk.h>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#include <gtksourceview/gtksource.h>
+#pragma GCC diagnostic pop
 
 #define LOG_VIEWER_WIDGET_TYPE \
   (log_viewer_widget_get_type ())
@@ -49,7 +56,8 @@ typedef struct _LogViewerWidget
   GtkWindow         parent_instance;
 
   GtkScrolledWindow * scrolled_win;
-  GtkTextView *     text_view;
+  GtkBox *          source_view_box;
+  GtkSourceView *   src_view;
 
 } LogViewerWidget;
 

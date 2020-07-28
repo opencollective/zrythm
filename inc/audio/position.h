@@ -84,6 +84,20 @@
 #define position_is_after_or_equal(_pos,_cmp) \
   (position_compare (_pos, _cmp) >= 0)
 
+/**
+ * Compares 2 positions based on their total ticks.
+ *
+ * negative = p1 is earlier
+ * 0 = equal
+ * positive = p2 is earlier
+ */
+#define position_compare_ticks(p1,p2) \
+  ((p1)->total_ticks - (p2)->total_ticks)
+
+#define position_is_equal_ticks(p1,p2) \
+  (fabs (position_compare_ticks (p1, p2)) <= \
+     DBL_EPSILON)
+
 /** Returns if _pos is after or equal to _start and
  * before _end. */
 #define position_is_between(_pos,_start,_end) \
@@ -112,11 +126,13 @@ typedef struct ZRegion ZRegion;
  */
 typedef struct Position
 {
-  int       bars; ///< this is the size of the number of beats per bar (top part of time sig)
+  /* This is the size of the number of beats per
+   * bar (top part of time sig) */
+  int       bars;
 
   /**
-   * The size of the beat is the the beat unit (bot part
-   * of time sig).
+   * The size of the beat is the the beat unit (bot
+   * part of time sig).
    */
   int       beats;
 

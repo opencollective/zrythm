@@ -17,6 +17,8 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-test-config.h"
+
 #include "actions/create_tracks_action.h"
 #include "audio/encoder.h"
 #include "audio/exporter.h"
@@ -181,7 +183,7 @@ test_export_wav ()
   UndoableAction * action =
     create_tracks_action_new (
       TRACK_TYPE_AUDIO, NULL, file,
-      TRACKLIST->num_tracks, 1);
+      TRACKLIST->num_tracks, PLAYHEAD, 1);
   undo_manager_perform (UNDO_MANAGER, action);
 
   char * tmp_dir =
@@ -200,7 +202,8 @@ test_export_wav ()
   settings.mode = EXPORT_MODE_FULL;
   settings.time_range = TIME_RANGE_LOOP;
   char * exports_dir =
-    project_get_exports_dir (PROJECT);
+    project_get_path (
+      PROJECT, PROJECT_PATH_EXPORTS, false);
   settings.file_uri =
     g_build_filename (
       exports_dir, "test_wav.wav", NULL);

@@ -15,18 +15,21 @@ packages:
   - ffmpeg
   - python
   - gettext
+  - graphviz
   - gtksourceview4
-  - sed
+  - helm-synth
   - ninja
   - help2man
   - python-sphinx
   - ladspa
   - lv2
-  - graphviz
   - rubberband
+  - sed
   - xdg-utils
   - lcov
   - gcovr
+  - rtaudio
+  - zstd
 sources:
   - https://git.sr.ht/~alextee/zrythm
   - https://github.com/mesonbuild/meson
@@ -35,7 +38,7 @@ secrets:
 tasks:
   - setup: |
       cd zrythm
-      meson build -Denable-tests=true -Dwith-manpage=true -Dffmpeg=enabled -Db_coverage=true
+      meson build -Dtests=true -Dmanpage=true -Dffmpeg=enabled -Db_coverage=true
   - build: |
       cd zrythm
       ninja -C build
@@ -50,9 +53,11 @@ tasks:
       ninja -C build test
       meson build --reconfigure -Dsdl=enabled -Drtaudio=disabled -Drtmidi=disabled
       ninja -C build test
-      meson build --reconfigure -Dgraphviz=disabled -Dtrial-ver=true -Dstrict-flags=true -Dwith-dseg-font=false
+      meson build --reconfigure -Dgraphviz=disabled -Dtrial_ver=true -Dstrict_flags=true -Ddseg_font=false
       ninja -C build test
-      meson build --reconfigure -Dstrict-flags=true -Dwith-user-manual=true -Dguile=disabled
+      meson build --reconfigure -Dstrict_flags=true -Duser_manual=true -Dguile=disabled
+      ninja -C build test
+      meson build --reconfigure -Drtaudio=auto -Drtmidi=disabled
       ninja -C build test
   - install: |
       cd zrythm

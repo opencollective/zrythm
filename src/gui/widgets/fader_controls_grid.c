@@ -19,19 +19,26 @@
 
 #include "audio/track.h"
 #include "gui/widgets/balance_control.h"
+#include "gui/widgets/center_dock.h"
 #include "gui/widgets/fader.h"
+#include "gui/widgets/fader_controls_expander.h"
 #include "gui/widgets/fader_controls_grid.h"
+#include "gui/widgets/inspector_track.h"
+#include "gui/widgets/left_dock_edge.h"
+#include "gui/widgets/main_window.h"
 #include "gui/widgets/meter.h"
 #include "project.h"
 #include "utils/gtk.h"
 #include "utils/math.h"
 #include "utils/resources.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
 G_DEFINE_TYPE (
-  FaderControlsGridWidget, fader_controls_grid_widget,
+  FaderControlsGridWidget,
+  fader_controls_grid_widget,
   GTK_TYPE_GRID)
 
 static bool
@@ -40,11 +47,17 @@ update_meter_reading (
   GdkFrameClock * frame_clock,
   gpointer        user_data)
 {
-  if (!gtk_widget_get_mapped (
+  if (!MAIN_WINDOW ||
+      !gtk_widget_get_mapped (
         GTK_WIDGET (widget)) ||
       !widget->track)
     {
       return G_SOURCE_CONTINUE;
+    }
+
+  if (widget != MW_TRACK_INSPECTOR->fader->grid)
+    {
+      return G_SOURCE_REMOVE;
     }
 
   double prev = widget->meter_reading_val;
@@ -53,66 +66,55 @@ update_meter_reading (
     track_get_channel (widget->track);
   g_warn_if_fail (channel);
 
-  /* TODO */
   if (track->out_signal_type == TYPE_EVENT)
     {
       gtk_label_set_text (
         widget->meter_readings, "-∞");
-      gtk_widget_queue_draw (
-        GTK_WIDGET (widget->meter_l));
-      gtk_widget_queue_draw (
-        GTK_WIDGET (widget->meter_r));
       return G_SOURCE_CONTINUE;
     }
 
-  /* calc decibels */
-  channel_set_current_l_db (
-    channel,
-    math_calculate_rms_db (
-      channel->stereo_out->l->buf,
-      AUDIO_ENGINE->nframes));
-  channel_set_current_r_db (
-    channel,
-    math_calculate_rms_db (
-      channel->stereo_out->r->buf,
-      AUDIO_ENGINE->nframes));
-
-  double val =
-    (channel_get_current_l_db (channel) +
-      channel_get_current_r_db (channel)) / 2;
-  double peak_val =
+  float amp =
     MAX (
-      channel_get_current_l_peak (channel),
-      channel_get_current_r_peak (channel));
-  peak_val =
-    math_amp_to_dbfs ((float) peak_val);
-  if (math_doubles_equal (val, prev))
+      widget->meter_l->meter->prev_max,
+      widget->meter_r->meter->prev_max);
+
+  double peak_val = (double) math_amp_to_dbfs (amp);
+
+  if (math_doubles_equal (peak_val, prev))
     return G_SOURCE_CONTINUE;
-  if (val < -100.)
+  if (peak_val < -98.)
     gtk_label_set_text (
       widget->meter_readings, "-∞");
   else
     {
-      char peak[400];
-      sprintf (peak, _("Peak"));
-      char rms[400];
-      /* TRANSLATORS: Root Mean Square */
-      sprintf (rms, _("RMS"));
-      char * string =
-        g_strdup_printf (
-          "%s:\n<small>%.1fdb</small>\n\n"
-          "%s:\n<small>%.1fdb</small>",
-          peak, peak_val, rms, val);
+      char format_str[400];
+      strcpy (format_str, _("Peak"));
+      strcat (format_str, ":\n<small>");
+      if (peak_val < -10.)
+        {
+          strcat (format_str, "%.0fdb</small>");
+        }
+      else
+        {
+          if (peak_val > 0)
+            {
+              strcat (
+                format_str,
+                "<span foreground=\"#FF0A05\">"
+                "%.1fdb</span></small>");
+            }
+          else
+            {
+              strcat (format_str, "%.1fdb</small>");
+            }
+        }
+      char str[800];
+      sprintf (str, format_str, peak_val);
       gtk_label_set_markup (
-        widget->meter_readings, string);
-      g_free (string);
+        widget->meter_readings, str);
     }
-  gtk_widget_queue_draw (
-    GTK_WIDGET (widget->meter_l));
-  gtk_widget_queue_draw (
-    GTK_WIDGET (widget->meter_r));
 
-  widget->meter_reading_val = val;
+  widget->meter_reading_val = peak_val;
 
   return G_SOURCE_CONTINUE;
 }
@@ -139,7 +141,8 @@ on_solo_toggled (
     {
       track_set_soloed (
         self->track,
-        gtk_toggle_button_get_active (btn), 1);
+        gtk_toggle_button_get_active (btn),
+        true, true);
     }
 }
 
@@ -153,7 +156,7 @@ on_mute_toggled (
       track_set_muted (
         self->track,
         gtk_toggle_button_get_active (btn),
-        1, 1);
+        true, true);
     }
 }
 
@@ -194,17 +197,15 @@ setup_meter (
   if (!track)
     return;
 
-  MeterType type = METER_TYPE_DB;
   Channel * ch = NULL;
   if (track_type_has_channel (track->type))
     ch = track_get_channel (track);
   switch (track->out_signal_type)
     {
     case TYPE_EVENT:
-      type = METER_TYPE_MIDI;
       meter_widget_setup (
-        self->meter_l, channel_get_current_l_db,
-        NULL, ch, type, 14);
+        self->meter_l,
+        ch->midi_out, 14);
       gtk_widget_set_margin_start (
         GTK_WIDGET (self->meter_l), 5);
       gtk_widget_set_margin_end (
@@ -213,15 +214,12 @@ setup_meter (
         GTK_WIDGET (self->meter_r), false);
       break;
     case TYPE_AUDIO:
-      type = METER_TYPE_DB;
       meter_widget_setup (
-        self->meter_l, channel_get_current_l_db,
-        channel_get_current_l_peak,
-        ch, type, 12);
+        self->meter_l,
+        ch->stereo_out->l, 12);
       meter_widget_setup (
-        self->meter_r, channel_get_current_r_db,
-        channel_get_current_r_peak,
-        ch, type, 12);
+        self->meter_r,
+        ch->stereo_out->r, 12);
       gtk_widget_set_visible (
         GTK_WIDGET (self->meter_r), true);
       break;
@@ -239,7 +237,7 @@ setup_fader (
       Channel * ch =
         track_get_channel (self->track);
       fader_widget_setup (
-        self->fader, &ch->fader, 36, 128);
+        self->fader, ch->fader, 36, 128);
       gtk_widget_set_margin_start (
         GTK_WIDGET (self->fader), 12);
       gtk_widget_set_halign (
@@ -301,25 +299,65 @@ fader_controls_grid_widget_setup (
             GTK_WIDGET (self->record), false);
         }
       gtk_toggle_button_set_active (
-        self->solo, track->solo);
+        self->solo, track_get_soloed (track));
       fader_controls_grid_widget_unblock_signal_handlers (
         self);
     }
 }
 
+/**
+ * Prepare for finalization.
+ */
+void
+fader_controls_grid_widget_tear_down (
+  FaderControlsGridWidget * self)
+{
+  g_message ("tearing down %p...", self);
+
+  if (self->tick_cb)
+    {
+      g_message ("removing tick callback...");
+      gtk_widget_remove_tick_callback (
+        GTK_WIDGET (self), self->tick_cb);
+      self->tick_cb = 0;
+    }
+
+  g_message ("done");
+}
+
 FaderControlsGridWidget *
 fader_controls_grid_widget_new (void)
 {
+  g_message ("creating...");
+
   FaderControlsGridWidget * self =
     g_object_new (
       FADER_CONTROLS_GRID_WIDGET_TYPE, NULL);
 
-  gtk_widget_add_tick_callback (
-    GTK_WIDGET (self),
-    (GtkTickCallback) update_meter_reading,
-    self, NULL);
+  self->tick_cb =
+    gtk_widget_add_tick_callback (
+      GTK_WIDGET (self),
+      (GtkTickCallback) update_meter_reading,
+      self, NULL);
+
+  g_message ("done");
 
   return self;
+}
+
+static void
+fader_controls_grid_finalize (
+  FaderControlsGridWidget * self)
+{
+  g_message ("finalizing...");
+
+  fader_controls_grid_widget_tear_down (self);
+
+  G_OBJECT_CLASS (
+    fader_controls_grid_widget_parent_class)->
+      finalize (G_OBJECT (self));
+
+  g_message ("done");
 }
 
 static void
@@ -329,6 +367,9 @@ fader_controls_grid_widget_init (
   g_type_ensure (FADER_WIDGET_TYPE);
 
   gtk_widget_init_template (GTK_WIDGET (self));
+
+  gtk_widget_set_size_request (
+    GTK_WIDGET (self->meter_readings), 50, -1);
 
   /* add css classes */
   GtkStyleContext * context =
@@ -381,4 +422,10 @@ fader_controls_grid_widget_class_init (
   BIND_CHILD (meter_readings);
 
 #undef BIND_CHILD
+
+  GObjectClass * oklass =
+    G_OBJECT_CLASS (klass);
+  oklass->finalize =
+    (GObjectFinalizeFunc)
+    fader_controls_grid_finalize;
 }

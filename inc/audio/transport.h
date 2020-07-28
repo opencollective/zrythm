@@ -33,13 +33,16 @@
 
 #include "zix/sem.h"
 
+typedef struct TimelineSelections TimelineSelections;
+typedef struct AudioEngine AudioEngine;
+
 /**
  * @addtogroup audio
  *
  * @{
  */
 
-#define TRANSPORT (&AUDIO_ENGINE->transport)
+#define TRANSPORT (AUDIO_ENGINE->transport)
 #define TRANSPORT_DEFAULT_TOTAL_BARS 128
 #define TRANSPORT_MAX_BPM 420.f
 #define TRANSPORT_MIN_BPM 40.f
@@ -101,6 +104,22 @@ typedef struct Transport
   Position      loop_end_pos;
 
   /**
+   * Selected range.
+   *
+   * This is 2 points instead of start/end because
+   * the 2nd point can be dragged past the 1st
+   * point so the order gets swapped.
+   *
+   * Should be compared each time to see which one
+   * is first.
+   */
+  Position           range_1;
+  Position           range_2;
+
+  /** Whether range should be displayed or not. */
+  int                has_range;
+
+  /**
    * Start marker position.
    *
    * This is where the song starts. Used when
@@ -146,12 +165,6 @@ typedef struct Transport
    * FIXME is this used? */
   nframes_t          position;
 
-  /** Transport tempo in beats per minute. */
-  bpm_t              bpm;
-
-  /** Used when changing the BPM. */
-  bpm_t              prev_bpm;
-
   /** Transport speed (0=stop, 1=play). */
   int               rolling;
 
@@ -189,51 +202,33 @@ beat_unit_strings[] =
 static const cyaml_schema_field_t
 transport_fields_schema[] =
 {
-  CYAML_FIELD_INT (
-    "total_bars", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Transport, total_bars),
-  CYAML_FIELD_MAPPING (
-    "playhead_pos", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Transport, playhead_pos,
     position_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "cue_pos", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Transport, cue_pos,
     position_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "loop_start_pos", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Transport, loop_start_pos,
     position_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "loop_end_pos", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Transport, loop_end_pos,
     position_fields_schema),
-  //CYAML_FIELD_MAPPING (
-    //"start_marker_pos", CYAML_FLAG_DEFAULT,
-    //Transport, start_marker_pos,
-    //position_fields_schema),
-  //CYAML_FIELD_MAPPING (
-    //"end_marker_pos", CYAML_FLAG_DEFAULT,
-    //Transport, end_marker_pos,
-    //position_fields_schema),
-  CYAML_FIELD_INT (
-    "beats_per_bar", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
+    Transport, range_1, position_fields_schema),
+  YAML_FIELD_MAPPING_EMBEDDED (
+    Transport, range_2, position_fields_schema),
+  YAML_FIELD_INT (
+    Transport, has_range),
+  YAML_FIELD_INT (
     Transport, beats_per_bar),
-  CYAML_FIELD_INT (
-    "beat_unit", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Transport, beat_unit),
-  //CYAML_FIELD_ENUM (
-    //"ebeat_unit", CYAML_FLAG_DEFAULT,
-    //Transport, ebeat_unit, beat_unit_strings,
-    //CYAML_ARRAY_LEN (beat_unit_strings)),
-  CYAML_FIELD_INT (
-    "position", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Transport, position),
-  CYAML_FIELD_FLOAT (
-    "bpm", CYAML_FLAG_DEFAULT,
-    Transport, bpm),
-  CYAML_FIELD_INT (
-    "recording", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Transport, recording),
 
   CYAML_FIELD_END
@@ -250,19 +245,44 @@ transport_schema =
 /**
  * Initialize transport
  */
+Transport *
+transport_new (
+  AudioEngine * engine);
+
 void
-transport_init (
-  Transport * self,
-  int         loading);
+transport_init_loaded (
+  Transport * self);
 
 /**
- * Sets BPM and does any necessary processing (like notifying interested
- * parties).
+ * Prepares audio regions for stretching (sets the
+ * \ref ZRegion.before_length).
+ *
+ * @param selections If NULL, all audio regions
+ *   are used. If non-NULL, only the regions in the
+ *   selections are used.
  */
 void
-transport_set_bpm (
-  Transport * self,
-  float bpm);
+transport_prepare_audio_regions_for_stretch (
+  Transport *          self,
+  TimelineSelections * sel);
+
+/**
+ * Stretches audio regions.
+ *
+ * @param selections If NULL, all audio regions
+ *   are used. If non-NULL, only the regions in the
+ *   selections are used.
+ * @param with_fixed_ratio Stretch all regions with
+ *   a fixed ratio. If this is off, the current
+ *   region length and \ref ZRegion.before_length
+ *   will be used to calculate the ratio.
+ */
+void
+transport_stretch_audio_regions (
+  Transport *          self,
+  TimelineSelections * sel,
+  bool                 with_fixed_ratio,
+  double               time_ratio);
 
 /**
  * Updates beat unit and anything depending on it.
@@ -361,6 +381,7 @@ void
 transport_update_position_frames (
   Transport * self);
 
+#if 0
 /**
  * Adds frames to the given global frames, while
  * adjusting the new frames to loop back if the
@@ -373,6 +394,7 @@ transport_frames_add_frames (
   const Transport * self,
   const long        gframes,
   const nframes_t   frames);
+#endif
 
 /**
  * Adds frames to the given position similar to
@@ -399,6 +421,35 @@ transport_get_ppqn (
   Transport * self);
 
 /**
+ * Stores the position of the range in \ref pos.
+ */
+void
+transport_get_range_pos (
+  Transport * self,
+  bool        first,
+  Position *  pos);
+
+/**
+ * Sets if the project has range and updates UI.
+ */
+void
+transport_set_has_range (
+  Transport * self,
+  bool        has_range);
+
+void
+transport_set_range1 (
+  Transport * self,
+  Position *  pos,
+  bool        snap);
+
+void
+transport_set_range2 (
+  Transport * self,
+  Position *  pos,
+  bool        snap);
+
+/**
  * Returns the number of processable frames until
  * and excluding the loop end point as a positive
  * number (>= 1) if the loop point was met between
@@ -410,6 +461,10 @@ transport_is_loop_point_met (
   const Transport * self,
   const long        g_start_frames,
   const nframes_t   nframes);
+
+void
+transport_free (
+  Transport * self);
 
 /**
  * @}

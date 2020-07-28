@@ -39,7 +39,8 @@
 #include <gtk/gtk.h>
 
 /**
- * Converts position bars/beats/quarter beats/ticks to frames
+ * Converts position bars/beats/quarter beats/ticks
+ * to frames
  *
  * Note: transport must be setup by this point.
  */
@@ -136,7 +137,7 @@ position_set_to_bar (
 void
 position_set_bar (
   Position * position,
-  int      bar)
+  int        bar)
 {
   if (bar < 1)
     bar = 1;
@@ -743,7 +744,18 @@ int
 position_get_total_bars (
   const Position * pos)
 {
-  return pos->bars - 1;
+  int bars = pos->bars - 1;
+
+  /* if we are at the start of the bar, don't
+   * count this bar */
+  Position pos_at_bar;
+  position_set_to_bar (&pos_at_bar, pos->bars);
+  if (pos_at_bar.frames == pos->frames)
+    {
+      bars--;
+    }
+
+  return bars;
 }
 
 /**

@@ -1,7 +1,5 @@
 /*
- * gui/widgets/meter.h - Meter widget
- *
- * Copyright (C) 2019 Alexandros Theodotou
+ * Copyright (C) 2019-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -35,28 +33,12 @@ G_DECLARE_FINAL_TYPE (
   MeterWidget, meter_widget,
   Z, METER_WIDGET, GtkDrawingArea)
 
-typedef enum MeterType
-{
-  METER_TYPE_MIDI,
-  METER_TYPE_DB
-} MeterType;
-
 typedef struct _MeterWidget
 {
   GtkDrawingArea         parent_instance;
 
-  /** Getter for current value. */
-  GenericFloatGetter     getter;
-
-  /**
-   * Getter for max value (amp).
-   *
-   * Will be ignored if NULL or returning negative.
-   */
-  GenericFloatGetter     max_getter;
-
-  void *                 object;
-  MeterType              type;
+  /** Associated meter. */
+  Meter *                meter;
 
   /** Hovered or not. */
   int                    hover;
@@ -66,25 +48,24 @@ typedef struct _MeterWidget
 
   GdkRGBA                start_color;
   GdkRGBA                end_color;
+
+  float                  meter_val;
+  float                  meter_peak;
+
+  /** ID of the source function. */
+  guint                  source_id;
 } MeterWidget;
 
 /**
  * Creates a new Meter widget and binds it to the
  * given value.
  *
- * @param getter Getter func.
- * @param max_getter Getter func for max (pass
- *   NULL for midi).
- * @param object Objet to call get with.
- * @param type Meter type.
+ * @param port Port this meter is for.
  */
 void
 meter_widget_setup (
   MeterWidget *      self,
-  GenericFloatGetter getter,
-  GenericFloatGetter max_getter,
-  void        *      object,
-  MeterType          type,
+  Port *             port,
   int                width);
 
 #endif

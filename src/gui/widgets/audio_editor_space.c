@@ -34,6 +34,7 @@
 #include "project.h"
 #include "utils/gtk.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -69,8 +70,10 @@ audio_editor_space_widget_update_size_group (
   AudioEditorSpaceWidget * self,
   int                     visible)
 {
-  CLIP_EDITOR_INNER_WIDGET_ADD_TO_SIZEGROUP (
-    left_box);
+  clip_editor_inner_widget_add_to_left_of_ruler_sizegroup (
+    MW_CLIP_EDITOR_INNER,
+    GTK_WIDGET (self->left_box),
+    visible);
 }
 
 void

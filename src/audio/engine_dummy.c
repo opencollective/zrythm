@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2019-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -19,9 +19,11 @@
 
 #include "audio/engine.h"
 #include "audio/engine_dummy.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/port.h"
+#include "audio/tempo_track.h"
 #include "project.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -53,53 +55,26 @@ process_cb (gpointer data)
 
 int
 engine_dummy_setup (
-  AudioEngine * self,
-  int           loading)
+  AudioEngine * self)
 {
   /* Set audio engine properties */
-  self->sample_rate   = 44100;
-  /*self->block_length  = 16384;*/
-  self->block_length  = 256;
+  self->sample_rate = 44100;
   self->midi_buf_size = 4096;
 
-  g_warn_if_fail (
-    TRANSPORT && TRANSPORT->beats_per_bar > 1);
-
-  engine_update_frames_per_tick (
-    self, TRANSPORT->beats_per_bar,
-    TRANSPORT->bpm, self->sample_rate);
-
-  /* create ports */
-  Port * monitor_out_l, * monitor_out_r;
-
-  const char * monitor_out_l_str =
-    "Monitor out L";
-  const char * monitor_out_r_str =
-    "Monitor out R";
-
-  if (loading)
+  if (ZRYTHM_HAVE_UI && zrythm_app->buf_size)
     {
+      self->block_length =
+        (nframes_t)
+        strtol (
+          zrythm_app->buf_size, (char **)NULL, 10);
     }
   else
     {
-      monitor_out_l = port_new_with_type (
-        TYPE_AUDIO,
-        FLOW_OUTPUT,
-        monitor_out_l_str);
-      monitor_out_r = port_new_with_type (
-        TYPE_AUDIO,
-        FLOW_OUTPUT,
-        monitor_out_r_str);
-
-      monitor_out_l->id.owner_type =
-        PORT_OWNER_TYPE_BACKEND;
-      monitor_out_r->id.owner_type =
-        PORT_OWNER_TYPE_BACKEND;
-
-      self->monitor_out =
-        stereo_ports_new_from_existing (
-          monitor_out_l, monitor_out_r);
+      self->block_length = 256;
     }
+
+  g_warn_if_fail (
+    TRANSPORT && TRANSPORT->beats_per_bar > 1);
 
   g_message ("Dummy Engine set up");
 
@@ -108,38 +83,36 @@ engine_dummy_setup (
 
 int
 engine_dummy_midi_setup (
-  AudioEngine * self,
-  int           loading)
+  AudioEngine * self)
 {
   self->midi_buf_size = 4096;
-
-  /*if (loading)*/
-    /*{*/
-    /*}*/
-  /*else*/
-    /*{*/
-      /*self->midi_in =*/
-        /*port_new_with_type (*/
-          /*TYPE_EVENT,*/
-          /*FLOW_INPUT,*/
-          /*"Dummy MIDI In");*/
-      /*self->midi_in->identifier.owner_type =*/
-        /*PORT_OWNER_TYPE_BACKEND;*/
-    /*}*/
 
   return 0;
 }
 
 int
 engine_dummy_activate (
-  AudioEngine * self)
+  AudioEngine * self,
+  bool          activate)
 {
-  g_message ("Activating dummy audio engine");
+  if (activate)
+    {
+      g_message ("%s: activating...", __func__);
 
-  self->stop_dummy_audio_thread = 0;
-  self->dummy_audio_thread =
-    g_thread_new (
-      "process_cb", process_cb, self);
+      self->stop_dummy_audio_thread = false;
+      self->dummy_audio_thread =
+        g_thread_new (
+          "process_cb", process_cb, self);
+    }
+  else
+    {
+      g_message ("%s: deactivating...", __func__);
+
+      self->stop_dummy_audio_thread = true;
+      g_thread_join (self->dummy_audio_thread);
+    }
+
+  g_message ("%s: done", __func__);
 
   return 0;
 }
@@ -148,10 +121,4 @@ void
 engine_dummy_tear_down (
   AudioEngine * self)
 {
-  g_message ("stopping dummy audio DSP thread");
-
-  self->stop_dummy_audio_thread = 1;
-
-  /* wait for the thread to stop */
-  g_thread_join (self->dummy_audio_thread);
 }

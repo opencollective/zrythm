@@ -17,6 +17,8 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-test-config.h"
+
 #include "audio/engine_dummy.h"
 #include "audio/midi.h"
 #include "audio/midi_track.h"
@@ -484,8 +486,7 @@ test_fill_midi_events ()
    * Expected result:
    * No MIDI notes.
    */
-  position_set_to_bar (
-    &pos, 3);
+  position_set_to_bar (&pos, 3);
   position_update_ticks_and_frames (&pos);
   midi_track_fill_midi_events (
     track, pos.frames, 0, BUFFER_SIZE,
@@ -622,6 +623,16 @@ test_fill_midi_events ()
   g_assert_cmpuint (
     ev->time, ==, 9);
   midi_events_clear (events, 1);
+
+  /**
+   * TODO
+   * Premise: note starts on transport loop end.
+   * Start: on transport loop end
+   * End: much later
+   *
+   * Expected result:
+   * No note on.
+   */
 }
 
 int

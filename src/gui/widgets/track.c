@@ -28,6 +28,8 @@
 #include "audio/tracklist.h"
 #include "audio/region.h"
 #include "gui/backend/tracklist_selections.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/arranger.h"
 #include "gui/widgets/automatable_selector_popover.h"
 #include "gui/widgets/automation_mode.h"
@@ -56,7 +58,9 @@
 #include "utils/math.h"
 #include "utils/resources.h"
 #include "utils/string.h"
+#include "utils/symap.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -81,8 +85,8 @@ G_DEFINE_TYPE (
 #define ICON_NAME_CHORDS "minuet-chords"
 #define ICON_NAME_SHOW_MARKERS \
   "kdenlive-show-markers"
-#define ICON_NAME_MIDI \
-  "audio-midi"
+#define ICON_NAME_MIDI "audio-midi"
+#define ICON_NAME_TEMPO "filename-bpm-amarok"
 
 #ifdef _WOE32
 #define NAME_FONT "9"
@@ -463,7 +467,7 @@ draw_buttons (
       else if (string_is_equal (
                 cb->icon_name,
                 ICON_NAME_SOLO, 1) &&
-               self->track->solo)
+               track_get_soloed (self->track))
         {
           state =
             CUSTOM_BUTTON_WIDGET_STATE_TOGGLED;
@@ -1487,7 +1491,8 @@ show_context_menu (
 
       if (track->type != TRACK_TYPE_MASTER &&
           track->type != TRACK_TYPE_CHORD &&
-          track->type != TRACK_TYPE_MARKER)
+          track->type != TRACK_TYPE_MARKER &&
+          track->type != TRACK_TYPE_TEMPO)
         {
           /* delete track */
           if (num_selected == 1)
@@ -1498,7 +1503,7 @@ show_context_menu (
               g_strdup (_("_Delete Tracks"));
           menuitem =
             z_gtk_create_menu_item (
-              str, "z-edit-delete", 0, NULL, 0,
+              str, "edit-delete", 0, NULL, 0,
               "win.delete-selected-tracks");
           g_free (str);
           APPEND (menuitem);
@@ -1513,7 +1518,7 @@ show_context_menu (
           menuitem =
             z_gtk_create_menu_item (
               str,
-              "z-edit-copy",
+              "edit-copy",
               0,
               NULL,
               0,
@@ -1527,7 +1532,7 @@ show_context_menu (
         {
           menuitem =
             z_gtk_create_menu_item (
-              _("Add Region"), "z-list-add",
+              _("Add Region"), "list-add",
               0, NULL, 0,
               "win.duplicate-selected-tracks");
           APPEND (menuitem);
@@ -1538,7 +1543,7 @@ show_context_menu (
           num_selected == 1 ?
             _("Hide Track") :
             _("Hide Tracks"),
-          "z-view-hidden", 0, NULL, 0,
+          "view-hidden", 0, NULL, 0,
           "win.hide-selected-tracks");
       APPEND (menuitem);
 
@@ -1547,7 +1552,7 @@ show_context_menu (
           num_selected == 1 ?
             _("Pin/Unpin Track") :
             _("Pin/Unpin Tracks"),
-          "z-window-pin",
+          "window-pin",
           0,
           NULL,
           0,
@@ -1821,15 +1826,10 @@ multipress_pressed (
       PROJECT->last_selection =
         SELECTION_TYPE_TRACK;
 
-      track_select (
-        track,
-        track_is_selected (track) &&
-        state_mask & GDK_CONTROL_MASK ?
-          F_NO_SELECT: F_SELECT,
-        (state_mask & GDK_SHIFT_MASK ||
-          state_mask & GDK_CONTROL_MASK) ?
-          0 : 1,
-        1);
+      bool ctrl = state_mask & GDK_CONTROL_MASK;
+      bool shift = state_mask & GDK_SHIFT_MASK;
+      tracklist_selections_handle_click (
+        track, ctrl, shift, false);
     }
 
   track_widget_force_redraw (self);
@@ -1859,7 +1859,8 @@ multipress_released (
             {
               track_set_soloed (
                 self->track,
-                !track_get_soloed (self->track), 1);
+                !track_get_soloed (self->track),
+                true, true);
             }
           else if (string_is_equal (
                 cb->icon_name, ICON_NAME_MUTE, 1))
@@ -1867,7 +1868,7 @@ multipress_released (
               track_set_muted (
                 self->track,
                 !track_get_muted (self->track),
-                1, 1);
+                true, true);
             }
           else if (string_is_equal (
                 cb->icon_name,
@@ -1884,9 +1885,11 @@ multipress_released (
               instrument_track_toggle_plugin_visible (
                 self->track);
             }
-          else if (string_is_equal (
-                cb->icon_name,
-                ICON_NAME_SHOW_AUTOMATION_LANES, 1))
+          else if (
+            string_is_equal (
+              cb->icon_name,
+              ICON_NAME_SHOW_AUTOMATION_LANES,
+              true))
             {
               track_widget_on_show_automation_toggled (
                 self);
@@ -2049,9 +2052,10 @@ on_drag_begin (GtkGestureDrag *gesture,
           ctrl = self->ctrl_held_at_start;
 
           if (tracklist_selections_contains_track (
-                TRACKLIST_SELECTIONS,
-                track))
-            selected = 1;
+                TRACKLIST_SELECTIONS, track))
+            {
+              selected = 1;
+            }
 
           /* no control & not selected */
           if (!ctrl && !selected)
@@ -2306,6 +2310,9 @@ track_widget_on_show_automation_toggled (
 {
   Track * track = self->track;
 
+  g_message (
+    "%s: toggled on %s", __func__, track->name);
+
   /* set visibility flag */
   track_set_automation_visible (
     track, !track->automation_visible);
@@ -2317,8 +2324,7 @@ track_widget_on_record_toggled (
 {
   Track * track = self->track;
   g_return_if_fail (track);
-  ChannelTrack * ct = (ChannelTrack *) track;
-  Channel * chan = ct->channel;
+  Channel * chan = track->channel;
   g_return_if_fail (chan);
 
   /* toggle record flag */
@@ -2391,7 +2397,7 @@ on_screen_changed (
 static CustomButtonWidget *
 add_button (
   TrackWidget * self,
-  int           top,
+  bool          top,
   const char *  icon_name)
 {
   CustomButtonWidget * cb =
@@ -2552,6 +2558,12 @@ track_widget_new (Track * track)
       strcpy (
         self->icon_name, ICON_NAME_SHOW_MARKERS);
       break;
+    case TRACK_TYPE_TEMPO:
+      strcpy (self->icon_name, ICON_NAME_TEMPO);
+      add_button (
+        self, true,
+        ICON_NAME_SHOW_AUTOMATION_LANES);
+      break;
     case TRACK_TYPE_AUDIO_BUS:
       strcpy (self->icon_name, ICON_NAME_BUS);
       add_solo_button (self, 1);
@@ -2601,15 +2613,12 @@ track_widget_new (Track * track)
 
   if (track_type_has_channel (self->track->type))
     {
-      MeterType type = METER_TYPE_DB;
       switch (self->track->out_signal_type)
         {
         case TYPE_EVENT:
-          type = METER_TYPE_MIDI;
           meter_widget_setup (
-            self->meter_l, channel_get_current_l_db,
-            NULL,
-            self->track->channel, type, 8);
+            self->meter_l,
+            self->track->channel->midi_out, 8);
           gtk_widget_set_margin_start (
             GTK_WIDGET (self->meter_l), 2);
           gtk_widget_set_margin_end (
@@ -2619,16 +2628,13 @@ track_widget_new (Track * track)
             GTK_WIDGET (self->meter_r), 0);
           break;
         case TYPE_AUDIO:
-          type = METER_TYPE_DB;
           meter_widget_setup (
-            self->meter_l, channel_get_current_l_db,
-            channel_get_current_l_peak,
-            self->track->channel, type, 6);
+            self->meter_l,
+            self->track->channel->stereo_out->l, 6);
           self->meter_l->padding = 0;
           meter_widget_setup (
-            self->meter_r, channel_get_current_r_db,
-            channel_get_current_r_peak,
-            self->track->channel, type, 6);
+            self->meter_r,
+            self->track->channel->stereo_out->r, 6);
           self->meter_r->padding = 0;
           break;
         default:

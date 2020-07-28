@@ -37,8 +37,8 @@ math_get_fader_val_from_amp (
 {
   /* to prevent weird values when amp is very
    * small */
-  if (amp <= 0.000001f)
-    return 0.f;
+  if (amp <= 0.00001f)
+    return 1e-20f;
   else
     {
       sample_t fader =
@@ -66,13 +66,32 @@ math_get_amp_val_from_fader (
 }
 
 /**
- * Calculate db using RMS method.
- *
- * @param buf Buffer containing the samples.
- * @param nframes Number of samples.
+ * Gets the digital peak of the given signal as
+ * amplitude (0-2).
  */
 sample_t
-math_calculate_rms_db (
+math_calculate_max_amp (
+  sample_t *      buf,
+  const nframes_t nframes)
+{
+  sample_t ret = 1e-20f;
+  for (nframes_t i = 0; i < nframes; i++)
+    {
+      if (fabsf (buf[i]) > ret)
+        {
+          ret = fabsf (buf[i]);
+        }
+    }
+
+  return ret;
+}
+
+/**
+ * Gets the RMS of the given signal as amplitude
+ * (0-2).
+ */
+sample_t
+math_calculate_rms_amp (
   sample_t *      buf,
   const nframes_t nframes)
 {
@@ -84,11 +103,26 @@ math_calculate_rms_db (
     sum += (sample * sample);
   }
   return
+    sqrtf (
+      sum /
+      ((sample_t) nframes /
+         (sample_t) MATH_RMS_FRAMES));
+}
+
+/**
+ * Calculate db using RMS method.
+ *
+ * @param buf Buffer containing the samples.
+ * @param nframes Number of samples.
+ */
+sample_t
+math_calculate_rms_db (
+  sample_t *      buf,
+  const nframes_t nframes)
+{
+  return
     math_amp_to_dbfs (
-      sqrtf (
-        sum /
-        ((sample_t) nframes /
-           (sample_t) MATH_RMS_FRAMES)));
+      math_calculate_rms_amp (buf, nframes));
 }
 
 /**

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2018-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -22,11 +22,14 @@
 #include "audio/chord_track.h"
 #include "audio/scale.h"
 #include "audio/track.h"
-#include "gui/backend/events.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "project.h"
 #include "utils/arrays.h"
 #include "utils/flags.h"
+#include "utils/object_utils.h"
 #include "utils/objects.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -141,6 +144,10 @@ void
 chord_track_clear (
   ChordTrack * self)
 {
+  g_return_if_fail (
+    IS_TRACK (self) &&
+    self->type == TRACK_TYPE_CHORD);
+
   for (int i = 0; i < self->num_scales; i++)
     {
       ScaleObject * scale = self->scales[i];
@@ -160,8 +167,11 @@ void
 chord_track_remove_scale (
   ChordTrack *  self,
   ScaleObject * scale,
-  int free)
+  bool          free)
 {
+  g_return_if_fail (
+    IS_TRACK (self) && IS_SCALE_OBJECT (scale));
+
   /* deselect */
   arranger_object_select (
     (ArrangerObject *) scale, F_NO_SELECT,
@@ -169,21 +179,15 @@ chord_track_remove_scale (
 
   array_delete (
     self->scales, self->num_scales, scale);
-  if (free)
-    free_later (scale, arranger_object_free);
 
   scale->index = -1;
+
+  if (free)
+    {
+      free_later (scale, arranger_object_free);
+    }
 
   EVENTS_PUSH (
     ET_ARRANGER_OBJECT_REMOVED,
     ARRANGER_OBJECT_TYPE_SCALE_OBJECT);
-}
-
-void
-chord_track_free (ChordTrack * self)
-{
-  /* remove chords */
-  for (int i = 0; i < self->num_chord_regions; i++)
-    arranger_object_free (
-      (ArrangerObject *) self->chord_regions[i]);
 }

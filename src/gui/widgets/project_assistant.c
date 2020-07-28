@@ -24,6 +24,7 @@
 #include "utils/io.h"
 #include "utils/resources.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -450,8 +451,10 @@ on_finish (
         quit = 1;
       gtk_widget_destroy (GTK_WIDGET (dialog));
 
-      g_message ("creating project %s",
-                 ZRYTHM->create_project_path);
+      g_message (
+        "%s (%s): creating project %s",
+        __func__, __FILE__,
+        ZRYTHM->create_project_path);
     }
 
   if (quit)
@@ -465,8 +468,7 @@ on_finish (
         GTK_WIDGET (self), 0);
       g_action_group_activate_action (
         G_ACTION_GROUP (zrythm_app),
-        "init_main_window",
-        NULL);
+        "load_project", NULL);
     }
 }
 

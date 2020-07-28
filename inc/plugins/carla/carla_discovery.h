@@ -26,7 +26,7 @@
 #ifndef __PLUGINS_CARLA_DISCOVERY_H__
 #define __PLUGINS_CARLA_DISCOVERY_H__
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_CARLA
 
@@ -98,6 +98,10 @@ PluginDescriptor *
 z_carla_discovery_parse_plugin_info (
   const char * plugin_path,
   char * results);
+
+CarlaBridgeMode
+z_carla_discovery_get_bridge_mode (
+  const PluginDescriptor * descr);
 
 /**
  * @}

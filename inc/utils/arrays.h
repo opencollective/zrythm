@@ -28,7 +28,7 @@
 /**
  * Appends element to the end of array array and increases the size.
  */
-#define array_append(array, size, element) \
+#define array_append(array,size,element) \
   (array)[(size)++] = element;
 
 #define array_double_append(arr1,arr2,size,el1,el2) \
@@ -80,9 +80,9 @@
       (size) = \
         (size_t) (count) == 0 ? \
           1 : (size_t) (count) * 2; \
-      (array) = \
+      array = \
         realloc ( \
-          (array), \
+          array, \
           sizeof (type) * (size_t) (size)); \
     }
 

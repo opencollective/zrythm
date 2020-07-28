@@ -51,13 +51,17 @@ typedef struct _ChannelWidget
   GtkEventBox         parent_instance;
   GtkGrid *          grid;
   RouteTargetSelectorWidget * output;
-  ColorAreaWidget     * color;
+  ColorAreaWidget *   color;
   GtkEventBox *       icon_and_name_event_box;
   EditableLabelWidget * name;
-  GtkBox              * phase_controls;
-  GtkButton           * phase_invert;
-  GtkLabel            * phase_reading;
-  KnobWidget          * phase_knob;
+  GtkBox *            phase_controls;
+  GtkButton *         phase_invert;
+  GtkLabel *          phase_reading;
+  KnobWidget *        phase_knob;
+
+  /** Instrument slot. */
+  GtkBox *            instrument_box;
+  ChannelSlotWidget * instrument_slot;
 
   /* ----- Inserts ------ */
   PluginStripExpanderWidget * inserts;
@@ -125,6 +129,8 @@ typedef struct _ChannelWidget
 
   /** Drag on the icon and name event box. */
   GtkGestureDrag       * drag;
+
+  bool                   setup;
 } ChannelWidget;
 
 /**
@@ -157,6 +163,10 @@ channel_widget_redraw_fader (
  */
 ChannelWidget *
 channel_widget_new (Channel * channel);
+
+void
+channel_widget_tear_down (
+  ChannelWidget * self);
 
 /**
  * Updates the meter reading

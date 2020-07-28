@@ -19,7 +19,8 @@
 
 #include "actions/create_tracks_action.h"
 #include "audio/engine.h"
-#include "audio/mixer.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/expander_box.h"
 #include "gui/widgets/track_visibility_tree.h"
 #include "gui/widgets/center_dock.h"
@@ -33,6 +34,7 @@
 #include "utils/resources.h"
 #include "utils/string.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -123,11 +125,8 @@ create_model ()
 static void
 tree_view_setup (
   TrackVisibilityTreeWidget * self,
-  GtkTreeView *         tree_view,
-  GtkTreeModel *        model)
+  GtkTreeView *         tree_view)
 {
-  gtk_tree_view_set_model (tree_view, model);
-
   /* init tree view */
   GtkCellRenderer * renderer;
   GtkTreeViewColumn * column;
@@ -192,10 +191,7 @@ track_visibility_tree_widget_new ()
       TRACK_VISIBILITY_TREE_WIDGET_TYPE, NULL);
 
   /* setup tree */
-  self->tree_model =
-    create_model ();
-  tree_view_setup (
-    self, self->tree, self->tree_model);
+  tree_view_setup (self, self->tree);
 
   return self;
 }

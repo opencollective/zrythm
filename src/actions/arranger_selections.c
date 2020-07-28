@@ -24,15 +24,66 @@
 #include "audio/chord_track.h"
 #include "audio/marker_track.h"
 #include "audio/track.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/arranger_selections.h"
 #include "gui/widgets/center_dock.h"
 #include "project.h"
 #include "utils/flags.h"
 #include "utils/math.h"
+#include "utils/object_utils.h"
 #include "utils/objects.h"
 #include "utils/string.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
+
+void
+arranger_selections_action_init_loaded (
+  ArrangerSelectionsAction * self)
+{
+#define DO_SELECTIONS(sc) \
+  if (self->sc##_sel) \
+    { \
+      self->sel = \
+        (ArrangerSelections *) \
+        self->sc##_sel; \
+      self->sel_after = \
+        (ArrangerSelections *) \
+        self->sc##_sel_after; \
+      arranger_selections_init_loaded ( \
+        self->sel, false); \
+      if (self->sel_after) \
+        { \
+          arranger_selections_init_loaded ( \
+            self->sel_after, false); \
+        } \
+    }
+  DO_SELECTIONS (chord);
+  DO_SELECTIONS (tl);
+  DO_SELECTIONS (ma);
+  DO_SELECTIONS (automation);
+
+  for (int j = 0; j < self->num_split_objs; j++)
+    {
+      if (self->region_r1[j])
+        {
+          self->r1[j] =
+            (ArrangerObject *)
+            self->region_r1[j];
+          self->r2[j] =
+            (ArrangerObject *)
+            self->region_r2[j];
+        }
+      else if (self->mn_r1[j])
+        {
+          self->r1[j] =
+            (ArrangerObject *) self->mn_r1[j];
+          self->r2[j] =
+            (ArrangerObject *) self->mn_r2[j];
+        }
+    }
+}
 
 /**
  * Sets the selections used when serializing.
@@ -52,6 +103,13 @@ set_selections (
   if (clone)
     {
       sel = arranger_selections_clone (_sel);
+    }
+
+  if (ZRYTHM_TESTING)
+    {
+      arranger_selections_verify (_sel);
+      if (_sel != sel)
+        arranger_selections_verify (sel);
     }
 
   if (is_after)
@@ -371,7 +429,7 @@ arranger_selections_action_new_edit (
     {
       self->first_run = 0;
       /* set as sel_after to avoid segfault, it
-       * will  be ignored anyway */
+       * will be ignored anyway */
       set_selections (
         self, sel_before, true, true);
     }
@@ -490,7 +548,7 @@ add_object_to_project (
 
         /* add it to the region */
         chord_region_add_chord_object (
-          region, chord);
+          region, chord, F_NO_PUBLISH_EVENTS);
       }
       break;
     case ARRANGER_OBJECT_TYPE_MIDI_NOTE:
@@ -500,7 +558,7 @@ add_object_to_project (
 
         /* add it to the region */
         midi_region_add_midi_note (
-          region, mn, 1);
+          region, mn, F_PUBLISH_EVENTS);
       }
       break;
     case ARRANGER_OBJECT_TYPE_SCALE_OBJECT:
@@ -560,7 +618,8 @@ add_object_to_project (
 
         /* if region, also set is as the clip
          * editor region */
-        clip_editor_set_region (CLIP_EDITOR, r);
+        clip_editor_set_region (
+          CLIP_EDITOR, r, true);
       }
       break;
     default:
@@ -618,7 +677,8 @@ remove_object_from_project (
         ZRegion * region =
           arranger_object_get_region (obj);
         chord_region_remove_chord_object (
-          region, chord, F_FREE);
+          region, chord, F_FREE,
+          F_NO_PUBLISH_EVENTS);
       }
       break;
     case ARRANGER_OBJECT_TYPE_REGION:
@@ -888,6 +948,7 @@ move_obj_by_tracks_and_lanes (
   const int        tracks_diff,
   const int        lanes_diff)
 {
+  g_return_if_fail (IS_ARRANGER_OBJECT (obj));
   if (tracks_diff)
     {
       g_return_if_fail (
@@ -962,6 +1023,10 @@ do_or_undo_duplicate_or_link (
   ArrangerObject ** objs =
     arranger_selections_get_all_objects (
       self->sel_after, &size);
+  if (ZRYTHM_TESTING)
+    {
+      arranger_selections_verify (self->sel_after);
+    }
   /* objects the duplication/link was based from */
   ArrangerObject ** orig_objs =
     arranger_selections_get_all_objects (
@@ -999,6 +1064,7 @@ do_or_undo_duplicate_or_link (
         ARRANGER_OBJECT_FLAG_NON_PROJECT;
       orig_objs[i]->flags |=
         ARRANGER_OBJECT_FLAG_NON_PROJECT;
+      g_warn_if_fail (IS_ARRANGER_OBJECT (objs[i]));
 
       ArrangerObject * obj;
       if (_do)
@@ -1455,8 +1521,7 @@ do_or_undo_record (
       /* clear current selections in the project */
       arranger_selections_clear (sel);
 
-      /* if doing in a create action or undoing
-       * in a delete action */
+      /* if do/redoing */
       if (_do)
         {
           /* create the newly recorded objects */
@@ -1664,6 +1729,8 @@ do_or_undo_edit (
                     SET_PRIMITIVE (
                       ArrangerObject, muted);
                     SET_PRIMITIVE (ZRegion, color);
+                    SET_PRIMITIVE (
+                      ZRegion, musical_mode);
                   }
                   break;
                 case ARRANGER_OBJECT_TYPE_MIDI_NOTE:
@@ -1677,8 +1744,6 @@ do_or_undo_edit (
                       (MidiNote *) dest_objs[i];
                     velocity_set_val (
                       mn->vel, dest_mn->vel->vel);
-                    mn->vel->cache_vel =
-                      dest_mn->vel->vel;
                   }
                   break;
                 case ARRANGER_OBJECT_TYPE_AUTOMATION_POINT:
@@ -1846,7 +1911,7 @@ do_or_undo_resize (
           g_return_val_if_fail (obj, -1);
 
           /* resize */
-          ArrangerObjectResizeType type;
+          ArrangerObjectResizeType type = -1;
           int left = 0;
           switch (self->resize_type)
             {
@@ -1878,14 +1943,16 @@ do_or_undo_resize (
             case ARRANGER_SELECTIONS_ACTION_RESIZE_R_FADE:
               type = ARRANGER_OBJECT_RESIZE_FADE;
               break;
+            default:
+              g_warn_if_reached ();
             }
           arranger_object_resize (
-            obj, left, type, ticks);
+            obj, left, type, ticks, false);
 
           /* also resize the clone so we can find
            * the actual object next time */
           arranger_object_resize (
-            objs[i], left, type, ticks);
+            objs[i], left, type, ticks, false);
         }
     }
 
@@ -1987,7 +2054,7 @@ do_or_undo_quantize (
   ArrangerSelections * sel =
     get_actual_arranger_selections (self);
   EVENTS_PUSH (
-    ET_ARRANGER_SELECTIONS_CHANGED, sel);
+    ET_ARRANGER_SELECTIONS_QUANTIZED, sel);
 
   self->first_run = 0;
 
@@ -2096,7 +2163,8 @@ void
 arranger_selections_action_free (
   ArrangerSelectionsAction * self)
 {
-  arranger_selections_free_full (self->sel);
+  object_free_w_func_and_null (
+    arranger_selections_free_full, self->sel);
 
-  free (self);
+  object_zero_and_free (self);
 }

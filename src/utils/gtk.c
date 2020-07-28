@@ -19,6 +19,7 @@
 
 #include "gui/accel.h"
 #include "utils/gtk.h"
+#include "utils/io.h"
 #include "utils/resources.h"
 #include "utils/string.h"
 #include "utils/ui.h"
@@ -578,4 +579,35 @@ z_gtk_widget_set_margin (
   gtk_widget_set_margin_end (widget, margin);
   gtk_widget_set_margin_top (widget, margin);
   gtk_widget_set_margin_bottom (widget, margin);
+}
+
+GtkFlowBoxChild *
+z_gtk_flow_box_get_selected_child (
+  GtkFlowBox * self)
+{
+  GList * list =
+    gtk_flow_box_get_selected_children (self);
+  GtkFlowBoxChild * sel_child = NULL;
+  for (GList * l = list; l != NULL; l = l->next)
+    {
+      sel_child = (GtkFlowBoxChild *) l->data;
+      break;
+    }
+  g_list_free (list);
+
+  return sel_child;
+}
+
+/**
+ * Callback to use for simple directory links.
+ */
+bool
+z_gtk_activate_dir_link_func (
+  GtkLabel * label,
+  char *     uri,
+  void *     data)
+{
+  io_open_directory (uri);
+
+  return TRUE;
 }

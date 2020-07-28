@@ -26,7 +26,7 @@
 #ifndef __AUDIO_MIDI_H__
 #define __AUDIO_MIDI_H__
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -35,7 +35,7 @@
 #include "zix/sem.h"
 
 #ifdef HAVE_JACK
-#include <jack/midiport.h>
+#include "weak_libjack.h"
 #endif
 
 #include <gtk/gtk.h>

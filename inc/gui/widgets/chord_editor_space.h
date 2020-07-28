@@ -77,19 +77,25 @@ typedef struct _ChordEditorSpaceWidget
   /** Containers for each chord key. */
   GtkBox *              chord_key_boxes[128];
 
+  GtkScrolledWindow *   chord_keys_scroll;
+
+  /** Vertical size goup for the keys and the
+   * arranger. */
+  GtkSizeGroup *        arranger_and_keys_vsize_group;
+
   /** The arranger. */
   ArrangerWidget *      arranger;
   GtkScrolledWindow *   arranger_scroll;
   GtkViewport *         arranger_viewport;
-
-  /** Pixel height of each key, determined by the
-   * zoom level. */
-  int                  px_per_key;
-
-  /** Pixel height of all keys combined. */
-  int                  total_key_px;
-
 } ChordEditorSpaceWidget;
+
+int
+chord_editor_space_widget_get_chord_height (
+  ChordEditorSpaceWidget * self);
+
+int
+chord_editor_space_widget_get_all_chords_height (
+  ChordEditorSpaceWidget * self);
 
 void
 chord_editor_space_widget_setup (

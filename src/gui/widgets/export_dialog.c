@@ -22,9 +22,12 @@
 #include "gui/widgets/export_dialog.h"
 #include "gui/widgets/dialogs/export_progress_dialog.h"
 #include "project.h"
+#include "utils/gtk.h"
 #include "utils/io.h"
 #include "utils/resources.h"
 #include "utils/ui.h"
+#include "settings/settings.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -58,7 +61,8 @@ get_export_filename (ExportDialogWidget * self)
                      "mixdown", // TODO replace
                      format);
   char * exports_dir =
-    project_get_exports_dir (PROJECT);
+    project_get_path (
+      PROJECT, PROJECT_PATH_EXPORTS, false);
   char * tmp =
     g_build_filename (
       exports_dir,
@@ -80,46 +84,32 @@ get_export_filename (ExportDialogWidget * self)
   return base;
 }
 
-static gboolean
-on_activate_export_path_link (
-  GtkLabel *label,
-  gchar    *uri,
-  ExportDialogWidget * self)
-{
-  io_open_directory (uri);
-
-  return TRUE;
-}
-
 static void
 update_text (ExportDialogWidget * self)
 {
   char * filename =
     get_export_filename (self);
 
-  char * matcha =
-    gdk_rgba_to_string (&UI_COLORS->matcha);
+  char matcha[10];
+  ui_gdk_rgba_to_hex (&UI_COLORS->matcha, matcha);
 
 #define ORANGIZE(x) \
   "<span " \
   "foreground=\"" matcha "\">" x "</span>"
 
   char * exports_dir =
-    project_get_exports_dir (PROJECT);
+    project_get_path (
+      PROJECT, PROJECT_PATH_EXPORTS, false);
   char * str =
     g_strdup_printf (
       "The following files will be created:\n"
-      "<span " \
-      "foreground=\"%s\">%s</span>"
+      "<span foreground=\"%s\">%s</span>"
       "\n\n"
       "in the directory:\n"
-      "<a href=\"%s\">"
-      "foreground=\"%s\">%s</span>"
-      "</a>",
+      "<a href=\"%s\">%s</a>",
       matcha,
       filename,
       exports_dir,
-      matcha,
       exports_dir);
   gtk_label_set_markup (
     self->output_label,
@@ -127,11 +117,10 @@ update_text (ExportDialogWidget * self)
   g_free (filename);
   g_free (str);
   g_free (exports_dir);
-  g_free (matcha);
 
   g_signal_connect (
     G_OBJECT (self->output_label), "activate-link",
-    G_CALLBACK (on_activate_export_path_link), self);
+    G_CALLBACK (z_gtk_activate_dir_link_func), self);
 
 #undef ORANGIZE
 }
@@ -471,8 +460,8 @@ on_export_clicked (
     }
 
   char * exports_dir =
-    project_get_exports_dir (
-      PROJECT);
+    project_get_path (
+      PROJECT, PROJECT_PATH_EXPORTS, false);
   char * filename =
     get_export_filename (self);
   info.file_uri =

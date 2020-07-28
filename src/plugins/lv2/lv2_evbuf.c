@@ -14,22 +14,23 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
-#include <assert.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "lv2/atom/atom.h"
 #include "lv2/event/event.h"
-
 #include "plugins/lv2/lv2_evbuf.h"
+#include "utils/objects.h"
 
 #include <gtk/gtk.h>
 
 struct LV2_Evbuf_Impl {
-  uint32_t       capacity;
-  uint32_t       atom_Chunk;
-  uint32_t       atom_Sequence;
-              LV2_Atom_Sequence atom;
+  uint32_t          capacity;
+  uint32_t          atom_Chunk;
+  uint32_t          atom_Sequence;
+  LV2_Atom_Sequence atom;
 };
 
 static inline uint32_t
@@ -39,13 +40,18 @@ lv2_evbuf_pad_size(uint32_t size)
 }
 
 LV2_Evbuf*
-lv2_evbuf_new(uint32_t       capacity,
-              uint32_t       atom_Chunk,
-              uint32_t       atom_Sequence)
+lv2_evbuf_new (
+  uint32_t       capacity,
+  uint32_t       atom_Chunk,
+  uint32_t       atom_Sequence)
 {
+  g_return_val_if_fail (capacity > 0, NULL);
+
   // FIXME: memory must be 64-bit aligned
-  LV2_Evbuf* evbuf = (LV2_Evbuf*)malloc(
-    sizeof(LV2_Atom_Sequence) + capacity);
+  LV2_Evbuf* evbuf =
+    malloc (
+      sizeof (LV2_Evbuf) +
+      sizeof(LV2_Atom_Sequence) + capacity);
   evbuf->capacity      = capacity;
   evbuf->atom_Chunk    = atom_Chunk;
   evbuf->atom_Sequence = atom_Sequence;
@@ -56,12 +62,13 @@ lv2_evbuf_new(uint32_t       capacity,
 void
 lv2_evbuf_free(LV2_Evbuf* evbuf)
 {
-  free(evbuf);
+  object_zero_and_free (evbuf);
 }
 
 void
 lv2_evbuf_reset(LV2_Evbuf* evbuf, bool input)
 {
+  g_return_if_fail (evbuf);
   if (input)
     {
       evbuf->atom.atom.size =
@@ -169,12 +176,13 @@ lv2_evbuf_get(LV2_Evbuf_Iterator iter,
 }
 
 bool
-lv2_evbuf_write(LV2_Evbuf_Iterator* iter,
-                uint32_t            frames,
-                uint32_t            subframes,
-                uint32_t            type,
-                uint32_t            size,
-                const uint8_t*      data)
+lv2_evbuf_write (
+  LV2_Evbuf_Iterator* iter,
+  uint32_t            frames,
+  uint32_t            subframes,
+  uint32_t            type,
+  uint32_t            size,
+  const uint8_t*      data)
 {
   LV2_Atom_Sequence* aseq;
   LV2_Atom_Event*    aev;
@@ -191,9 +199,11 @@ lv2_evbuf_write(LV2_Evbuf_Iterator* iter,
   aev->time.frames = frames;
   aev->body.type   = type;
   aev->body.size   = size;
-  memcpy(LV2_ATOM_BODY(&aev->body), data, size);
-
-  size             = lv2_evbuf_pad_size(sizeof(LV2_Atom_Event) + size);
+  memcpy (
+    LV2_ATOM_BODY (&aev->body), data, size);
+  size =
+    lv2_evbuf_pad_size (
+      sizeof(LV2_Atom_Event) + size);
   aseq->atom.size += size;
   iter->offset    += size;
 

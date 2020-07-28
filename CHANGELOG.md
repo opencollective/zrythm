@@ -1,6 +1,182 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [0.8.694] - 2020-07-18
+### Added
+- Allow routing from chord track to instrument tracks
+- Integration test for creating/deleting tracks using Helm
+- Add additional checks when tracks are added to the project
+- Add shift-selection for selecting multiple tracks or channels
+- Add option for level of UI detail (improves CPU usage on lower end machines)
+- Show bug report dialog on non-fatal errors
+- Add tests for creating plugins and port connection actions
+- Make port connections and channel sends undoable
+- Show error if icon is not found at startup
+- Add authors to credits section in the manual
+- Add Guile API for creating sends between tracks, connecting ports between a plugin and a track, and creating tracks as undoable actions
+- Add Guile test runner
+- Add Trademark Policy for Zrythm wordmark and logo
+- Add option to override the program name
+
+### Changed
+- Refactor: add `is_project` to many objects
+- Use weakjack on Windows
+- Add version requirement on RtAudio dependency
+- Only create MIDI notes on track 1 when exporting a MIDI region
+- Update German, Galician, Japanese translations
+- Print function name and line number in the log
+- Open plugins that require the KX UI interface with carla
+- Various drawing optimizations (by passing integers to cairo)
+- Use configuration file for tests
+- Each plugin instance now has its own state directory, including non-project plugin instances
+- Save plugin states when plugin instances are created
+- Ignore sysex messages from LV2 plugins for now
+- Update Guile API docs with more examples
+- Catch invalid SFZ/SF2 paths instead of crashing
+- Add detailed license information for each icon
+
+### Fixed
+- Fix crash when undoing twice after deleting a track
+- Fix crash when creating a new plugin fails
+- Fix MIDI note offs not being sent at the right time when moving MIDI notes
+- Fix issues with initialization of undoable actions when loading projects
+- Fix crash when closing Zrythm after resizing an automation region
+- Fix automation tracks not being cloned properly
+- Fix crash when undoing track deletion with automation
+- Fix automation regions not properly duplicated when duplicating tracks
+- Fix MIDI file import on Windows
+- Fix loading new projects from a loaded project
+- Fix an issue with exporting
+- Fix crash when connecting a plugin CV out port to another track's balance control
+- Fix automation track ID track positions not being updated when moving plugins from one track to another
+- Fix passing a project file as a command line argument not working
+- Fix crash when moving tracks
+- Fix editor not being refreshed when region owner track is deleted
+
+## [0.8.604] - 2020-06-26
+### Added
+- Add tempo track for BPM automation
+- Time-stretch audio regions in musical mode in real-time
+- Add musical mode selection to region context menu
+- Add --gdb, --cachegrind, --midi-backend, --audio-backend, --dummy, --buf-size and --interactive command line options
+- Add plugin browser context menu to open plugins with carla
+
+### Changed
+- Move mute and solo ports from track to fader
+- Add initial processor to routing graph
+- Routing code refactor: split to smaller files and simplify
+- ZrythmApp refactor: split code to Zrythm and ZrythmApp
+- Events code refactor: split to Event and EventManager
+- Other refactoring to allocate/free resources properly
+- Update French, Portuguese, Norwegian translations
+- Draw musical mode icon on regions
+- Disable region draw caching
+- Use cyaml v1.1.0 or above for precise float/double serialization
+- UI: make channel slots and sends shorter
+- Allow multiple Zrythm instances to be opened
+- Use the same naming scheme as native plugin UIs for carla plugin UI titles
+- Audio regions are now created at the playhead when creating new tracks
+- Use `get_state`/`set_state` for saving/loading the plugin state for carla plugins
+
+### Fixed
+- Fix editor quantization
+- Fix various memory leaks
+- Fix MIDI file export
+- Fix mute/solo not affecting the fader
+- Fix audio recording
+- Fix undo stack initialization when loading projects
+- Fix initialization of recorded regions on project load
+- Fix issues when resizing audio regions
+- Fix crash when cutting regions
+- Fix MIDI note positions being global instead of local during recording
+- Fix crash when undoing after using the eraser
+- Fix double instantiation of plugins when adding new tracks
+- Fix range selection
+- Fix crash when deleting a chord region
+
+## [0.8.535] - 2020-06-06
+### Added
+- Add image-missing fallback if icon is not found
+- Add build flag for extra optimizations
+- Show red reading in meters if peak above 0db, grey otherwise
+- Show native CPU usage meter on MacOS
+- Show build type in `--version`
+- Add VCS tag fallback version if git is not found
+- Make BPM changes undoable
+- Make changing the automation curve algorithm undoable
+- Show chord notes in chord editor lanes
+- Show color gradient in meters
+
+### Changed
+- Fallback to older compression API if zstd version is lower than 1.3
+- Don't attempt to build manpage on windows
+- Update French, Portuguese, Galician translations
+- Log to stderr until log file is initialized
+- Ask for LV2 plugin latency by passing block length instead of 2 samples
+- Underscorify and simplify build flags
+- Don't allow multiple preferences windows
+- Use LINGUAS file to determine available locales for meson
+- Open KX external UIs with carla
+- Make markers, chords and scales rounded rectangles
+- Use peak meter in mixer channels and RMS meter for master with falloffs (algorithms from x42 meters)
+- Chord editor now has 12 fixed chord slots
+- Accents in the chord creator are now toggled on single click
+- Only resize audio regions when BPM change is completed (in musical mode)
+- Use MPMC queue instead of a stack for queueing up objects to be deleted with `free_later()`
+
+### Deprecated
+- Deprecate libgtop support
+
+### Fixed
+- Fix zstd library discovery
+- Fix setting integers on gsettings keys expecting booleans
+- Fix CPU meter on windows
+- Fix various crashes with chord editor
+- Fix freezes when using RtMidi on Windows
+- Fix various MacOS issues
+- Fix scales not saved properly
+- Fix moving tracks clearing regions of tracks being moved
+- Fix undo/redo when moving tracks
+- Fix MIDI note on incorrectly being fired at transport loop point
+
+## [0.8.459] - 2020-05-15
+### Added
+- Add real time display to playhead meter
+- Add error handling when project fails to load
+- Add missing actions in automation editor
+- Add undoable region stretching and related cursors
+- Add option to return to cue point on stop
+- Add integration test for loading and playing back MIDI files
+- Add CLI commands to convert between .zpj and .yaml
+
+### Changed
+- Don't attempt to draw fades if there are none
+- Huge update of the user manual
+- Update French, Japanese translations
+- Use a semaphore to lock port operations during do/undo
+- Make `free_later()` traverse the stack in a non-GTK thread to avoid UI freezes when many objects are free'd
+- Bridge all GTK/Qt plugin UIs with carla
+- Auto-generate list of translators for about dialog from the TRANSLATORS file
+- Cache drawing of audio regions to prevent freezes when multiple regions are on the screen
+- Update build instructions for Windows
+- Use zstd to compress Zrythm project files
+
+### Removed
+- Remove cached positions from arranger objects
+- Remove breeze icons from distribution (now a runtime dependency)
+
+### Fixed
+- Fix sends being lost when moving tracks
+- Fix extension not properly extracted for filenames with multiple dots
+- Fix VST scanning in user home dir
+- Fix gcc 10 warnings/errors
+- Fix various issues with LV2 plugins loaded through carla
+- Fix bounce on tracks with carla plugins
+- Fix MIDI note off occasionally ignored
+- Fix snap points not being updated when BPM changes
+- Fix build with RtAudio but without RtMidi
+- Fix rtaudio input devices with the same name being string-matched as the selected output device
+
 ## [0.8.397] - 2020-05-05
 ### Added
 - Install freedesktop-compliant icon theme

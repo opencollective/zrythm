@@ -99,10 +99,12 @@ typedef enum PortOwnerType
   PORT_OWNER_TYPE_BACKEND,
   PORT_OWNER_TYPE_PLUGIN,
   PORT_OWNER_TYPE_TRACK,
-  PORT_OWNER_TYPE_PREFADER,
 
   /* track fader */
   PORT_OWNER_TYPE_FADER,
+
+  /* track prefader */
+  PORT_OWNER_TYPE_PREFADER,
 
   /* monitor fader */
   PORT_OWNER_TYPE_MONITOR_FADER,
@@ -215,7 +217,13 @@ typedef enum PortFlags
   /** Channels can send to this port (ie, this port
    * is a track procesor midi/stereo in or a plugin
    * sidechain in). */
-  PORT_FLAG_SENDABLE = 1 << 21,
+  PORT_FLAG_SEND_RECEIVABLE = 1 << 21,
+
+  /** This is a BPM port. */
+  PORT_FLAG_BPM = 1 << 22,
+
+  /** This is a time signature port. */
+  PORT_FLAG_TIME_SIG = 1 << 23,
 } PortFlags;
 
 static const cyaml_bitdef_t
@@ -242,7 +250,9 @@ port_flags_bitvals[] =
   { .name = "channel_fader", .offset = 18, .bits = 1 },
   { .name = "automatable", .offset = 19, .bits = 1 },
   { .name = "midi_automatable", .offset = 20, .bits = 1 },
-  { .name = "sendable", .offset = 21, .bits = 1 },
+  { .name = "send_receivable", .offset = 21, .bits = 1 },
+  { .name = "bpm", .offset = 22, .bits = 1 },
+  { .name = "time_sig", .offset = 23, .bits = 1 },
 };
 
 /**
@@ -369,17 +379,24 @@ port_identifier_is_equal (
   PortIdentifier * src,
   PortIdentifier * dest)
 {
-  return
+  bool eq =
     string_is_equal (
       dest->label, src->label, 0) &&
     dest->owner_type == src->owner_type &&
     dest->type == src->type &&
     dest->flow == src->flow &&
     dest->flags == src->flags &&
-    plugin_identifier_is_equal (
-      &dest->plugin_id, &src->plugin_id) &&
     dest->track_pos == src->track_pos &&
     dest->port_index == src->port_index;
+  if (dest->owner_type == PORT_OWNER_TYPE_PLUGIN)
+    {
+      eq =
+        eq &&
+        plugin_identifier_is_equal (
+          &dest->plugin_id, &src->plugin_id);
+    }
+
+  return eq;
 }
 
 /**

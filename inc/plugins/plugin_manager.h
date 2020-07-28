@@ -29,6 +29,8 @@
 #include "plugins/lv2/lv2_urid.h"
 #include "utils/symap.h"
 
+#include "zix/sem.h"
+
 #include <lilv/lilv.h>
 
 typedef struct CachedVstDescriptors
@@ -40,8 +42,8 @@ typedef struct CachedVstDescriptors
  * @{
  */
 
-#define PLUGIN_MANAGER (&ZRYTHM->plugin_manager)
-#define LV2_NODES PLUGIN_MANAGER->lv2_nodes
+#define PLUGIN_MANAGER (ZRYTHM->plugin_manager)
+#define LV2_NODES (PLUGIN_MANAGER->lv2_nodes)
 #define LILV_WORLD LV2_NODES.lilv_world
 #define LV2_GENERATOR_PLUGIN "Generator"
 #define LV2_CONSTANT_PLUGIN "Constant"
@@ -183,11 +185,8 @@ typedef struct PluginManager
 
 } PluginManager;
 
-/**
- * Initializes plugin manager.
- */
-void
-plugin_manager_init (PluginManager * self);
+PluginManager *
+plugin_manager_new (void);
 
 /**
  * Scans for plugins, optionally updating the
@@ -203,6 +202,11 @@ plugin_manager_scan_plugins (
   PluginManager * self,
   const double    max_progress,
   double *        progress);
+
+const PluginDescriptor *
+plugin_manager_find_plugin_from_uri (
+  PluginManager * self,
+  const char *    uri);
 
 void
 plugin_manager_free (

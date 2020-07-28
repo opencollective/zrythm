@@ -24,7 +24,7 @@
  * serialized.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <time.h>
 #include <sys/stat.h>
@@ -38,12 +38,15 @@
 #include "audio/engine.h"
 #include "audio/marker_track.h"
 #include "audio/midi_note.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
+#include "audio/tempo_track.h"
 #include "audio/track.h"
 #include "audio/tracklist.h"
 #include "audio/transport.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
+#include "gui/backend/tracklist_selections.h"
 #include "gui/widgets/create_project_dialog.h"
-#include "gui/widgets/header.h"
 #include "gui/widgets/main_window.h"
 #include "gui/widgets/region.h"
 #include "gui/widgets/splash.h"
@@ -51,41 +54,215 @@
 #include "gui/widgets/track.h"
 #include "plugins/carla_native_plugin.h"
 #include "plugins/lv2_plugin.h"
+#include "plugins/lv2/lv2_state.h"
+#include "settings/settings.h"
 #include "utils/arrays.h"
 #include "utils/datetime.h"
 #include "utils/general.h"
 #include "utils/file.h"
 #include "utils/flags.h"
 #include "utils/io.h"
-#include "utils/smf.h"
+#include "utils/objects.h"
 #include "utils/string.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
-
 #include <glib/gi18n.h>
+
+#include <zstd.h>
+
+/**
+ * Compresses/decompress a project from a file/data
+ * to a file/data.
+ *
+ * @param compress True to compress, false to
+ *   decompress.
+ * @param[out] dest Pointer to a location to allocate
+ *   memory.
+ * @param[out] dest_size Pointer to a location to
+ *   store the size of the allocated memory.
+ * @param src Input buffer or filepath.
+ * @param src_size Input buffer size, if not
+ *   filepath.
+ *
+ * @return Error message if error, otherwise NULL.
+ */
+char *
+_project_compress (
+  bool                   compress,
+  char **                _dest,
+  size_t *               _dest_size,
+  ProjectCompressionFlag dest_type,
+  const char *           _src,
+  const size_t           _src_size,
+  ProjectCompressionFlag src_type)
+{
+  g_message (
+    "using zstd v%d.%d.%d",
+    ZSTD_VERSION_MAJOR,
+    ZSTD_VERSION_MINOR,
+    ZSTD_VERSION_RELEASE);
+
+  char * src = NULL;
+  size_t src_size = 0;
+  switch (src_type)
+    {
+    case PROJECT_COMPRESS_DATA:
+      src = (char *) _src;
+      src_size = _src_size;
+      break;
+    case PROJECT_COMPRESS_FILE:
+      {
+        GError *err = NULL;
+        g_file_get_contents (
+          _src, &src, &src_size, &err);
+        if (err)
+          {
+            char err_msg[800];
+            strcpy (err_msg, err->message);
+            g_error_free (err);
+            return
+              g_strdup_printf (
+                _("Failed to open file: %s"),
+                err_msg);
+          }
+      }
+      break;
+    }
+
+  char * dest = NULL;
+  size_t dest_size = 0;
+  if (compress)
+    {
+      g_message ("compressing project...");
+      size_t compress_bound =
+        ZSTD_compressBound (src_size);
+      dest = malloc (compress_bound);
+      dest_size =
+        ZSTD_compress (
+          dest, compress_bound,
+          src, src_size, 1);
+      if (ZSTD_isError (dest_size))
+        {
+          free (dest);
+          return
+            g_strdup_printf (
+              "Failed to compress project file: %s",
+              ZSTD_getErrorName (dest_size));
+        }
+    }
+  else /* decompress */
+    {
+#if (ZSTD_VERSION_MAJOR == 1 && \
+  ZSTD_VERSION_MINOR < 3)
+      unsigned long long const frame_content_size =
+        ZSTD_getDecompressedSize (src, src_size);
+      if (frame_content_size == 0)
+#else
+      unsigned long long const frame_content_size =
+        ZSTD_getFrameContentSize (src, src_size);
+      if (frame_content_size ==
+            ZSTD_CONTENTSIZE_ERROR)
+#endif
+        {
+          return
+            g_strdup (
+              _("Project not compressed by zstd!"));
+        }
+      dest =
+        malloc ((size_t) frame_content_size);
+      dest_size =
+        ZSTD_decompress (
+          dest, frame_content_size,
+          src, src_size);
+      if (ZSTD_isError (dest_size))
+        {
+          free (dest);
+          return
+            g_strdup_printf (
+              _("Failed to decompress project "
+              "file: %s"),
+              ZSTD_getErrorName (dest_size));
+        }
+      if (dest_size != frame_content_size)
+        {
+          free (dest);
+          return
+            g_strdup_printf (
+              _("uncompressed_size != "
+              "frame_content_size impossible "
+              "because zstd will check this "
+              "condition!"));
+        }
+    }
+
+  g_message (
+    "%s : %u bytes -> %u bytes",
+    compress ? "Compression" : "Decompression",
+    (unsigned) src_size,
+    (unsigned) dest_size);
+
+  switch (src_type)
+    {
+    case PROJECT_COMPRESS_DATA:
+      *_dest = dest;
+      *_dest_size = dest_size;
+      break;
+    case PROJECT_COMPRESS_FILE:
+      {
+        GError *err = NULL;
+        g_file_set_contents (
+          *_dest, dest,
+          (gssize) dest_size, &err);
+        if (err)
+          {
+            char err_msg[800];
+            strcpy (err_msg, err->message);
+            g_error_free (err);
+            return
+              g_strdup_printf (
+                _("Failed to write file: %s"),
+                err_msg);
+          }
+      }
+      break;
+    }
+
+  return NULL;
+}
 
 /**
  * Tears down the project.
  */
 void
-project_tear_down (Project * self)
+project_free (Project * self)
 {
-  g_message ("tearing down the project...");
+  g_message ("%s: tearing down...", __func__);
 
-  PROJECT->loaded = 0;
+  PROJECT->loaded = false;
 
-  if (self->title)
-    g_free (self->title);
+  g_free_and_null (self->title);
 
-  engine_tear_down (&self->audio_engine);
-
-  if (self->tracklist.chord_track)
+  if (self->audio_engine &&
+      self->audio_engine->activated)
     {
-      track_free (self->tracklist.chord_track);
+      engine_activate (self->audio_engine, false);
     }
+  object_free_w_func_and_null (
+    tracklist_free, self->tracklist);
+  object_free_w_func_and_null (
+    engine_free, self->audio_engine);
+  object_free_w_func_and_null (
+    midi_mappings_free, self->midi_mappings);
+  object_free_w_func_and_null (
+    undo_manager_free, self->undo_manager);
+  object_free_w_func_and_null (
+    clip_editor_free, self->clip_editor);
 
-  free (self);
+  object_zero_and_free (self);
+
+  g_message ("%s: done", __func__);
 }
 
 /**
@@ -130,7 +307,8 @@ get_newer_backup (
   time_t t2;
 
   char * filepath =
-    project_get_project_file_path (self, 0);
+    project_get_path (
+      self, PROJECT_PATH_PROJECT_FILE, false);
   if (stat (filepath, &stat_res) == 0)
     {
       orig_tm = localtime (&stat_res.st_mtime);
@@ -147,7 +325,8 @@ get_newer_backup (
 
   char * result = NULL;
   char * backups_dir =
-    project_get_backups_dir (self);
+    project_get_path (
+      self, PROJECT_PATH_BACKUPS, false);
   dir = g_dir_open (backups_dir, 0, &error);
   if (!dir)
     {
@@ -219,7 +398,8 @@ set_and_create_next_available_backup_dir (
     g_free (self->backup_dir);
 
   char * backups_dir =
-    project_get_backups_dir (self);
+    project_get_path (
+      self, PROJECT_PATH_BACKUPS, false);
 
   int i = 0;
   do
@@ -282,39 +462,82 @@ create_and_set_dir_and_title (
 void
 project_sanity_check (Project * self)
 {
-  /* TODO */
+  g_message ("%s: checking...", __func__);
+
+  int max_size = 20;
+  Port ** ports =
+    calloc ((size_t) max_size, sizeof (Port *));
+  int num_ports = 0;
+  Port * port;
+  port_get_all (
+    &ports, &max_size, true, &num_ports);
+  for (int i = 0; i < num_ports; i++)
+    {
+      port = ports[i];
+      port_update_identifier (port, NULL);
+    }
+  free (ports);
+
+  /* TODO add arranger_object_get_all and check
+   * positions (arranger_object_sanity_check) */
+
+  g_message ("%s: done", __func__);
 }
 
-/* macro to clean previous main window */
-#define DESTROY_PREV_MAIN_WINDOW \
-  MainWindowWidget * mww = MAIN_WINDOW; \
-  MAIN_WINDOW = NULL; \
-  ZRYTHM->event_queue = NULL; \
-  if (ZRYTHM_HAVE_UI && GTK_IS_WIDGET (mww)) \
-    { \
-      g_message ( \
-        "destroying previous main window..."); \
-      gtk_widget_destroy (GTK_WIDGET (mww)); \
+static MainWindowWidget *
+hide_prev_main_window (void)
+{
+  event_manager_stop_events (EVENT_MANAGER);
+
+  MainWindowWidget * mww = MAIN_WINDOW;
+  MAIN_WINDOW = NULL;
+  if (GTK_IS_WIDGET (mww))
+    {
+      g_message (
+        "hiding previous main window...");
+      gtk_widget_set_visible (
+        GTK_WIDGET (mww), false);
     }
 
-#define RECREATE_MAIN_WINDOW \
-  if (loading_while_running && \
-      ZRYTHM_HAVE_UI) \
-    { \
-      g_message ("recreating main window..."); \
-      MAIN_WINDOW = \
-        main_window_widget_new (zrythm_app); \
-    }
+  return mww;
+}
 
-#define REFRESH_MAIN_WINDOW \
-  /* mimic behavior when starting the app */ \
-  if (loading_while_running && \
-      ZRYTHM_HAVE_UI) \
-    { \
-      events_init (ZRYTHM); \
-      main_window_widget_refresh (MAIN_WINDOW); \
-      g_atomic_int_set (&AUDIO_ENGINE->run, 1); \
+static void
+destroy_prev_main_window (
+  MainWindowWidget * mww)
+{
+  if (GTK_IS_WIDGET (mww))
+    {
+      g_message (
+        "destroying previous main window...");
+      main_window_widget_tear_down (mww);
+      gtk_widget_destroy (GTK_WIDGET (mww));
     }
+}
+
+static void
+setup_main_window (
+  Project * self)
+{
+  /* mimic behavior when starting the app */
+  if (ZRYTHM_HAVE_UI)
+    {
+      g_message ("setting up main window...");
+      event_manager_start_events (EVENT_MANAGER);
+      main_window_widget_setup (MAIN_WINDOW);
+
+      EVENTS_PUSH (
+        ET_PROJECT_LOADED, self);
+    }
+}
+
+static void
+recreate_main_window (void)
+{
+  g_message ("recreating main window...");
+  MAIN_WINDOW =
+    main_window_widget_new (zrythm_app);
+}
 
 /**
  * Initializes the selections in the project.
@@ -351,21 +574,28 @@ project_init_selections (Project * self)
 static void
 create_default (Project * self)
 {
-  int loading_while_running = self->loaded;
-  if (loading_while_running)
-    {
-      project_tear_down (self);
-      PROJECT = calloc (1, sizeof (Project));
-      self = PROJECT;
+  g_message ("creating default project...");
 
-      DESTROY_PREV_MAIN_WINDOW;
+  MainWindowWidget * mww = NULL;
+  if (ZRYTHM_HAVE_UI)
+    {
+      g_message ("hiding prev window...");
+      mww = hide_prev_main_window ();
     }
+
+  if (self)
+    {
+      project_free (self);
+    }
+  self = project_new (ZRYTHM);
+
+  self->tracklist = tracklist_new (self);
 
   /* initialize selections */
   project_init_selections (self);
 
-  engine_init (&self->audio_engine, 0);
-  undo_manager_init (&self->undo_manager, 0);
+  self->audio_engine = engine_new (self);
+  self->undo_manager = undo_manager_new ();
 
   /* init midi mappings */
   self->midi_mappings = midi_mappings_new ();
@@ -375,22 +605,36 @@ create_default (Project * self)
       ZRYTHM->create_project_path);
 
   /* init pinned tracks */
-  Track * track =
-    chord_track_new (0);
+
+  /* chord */
+  g_message ("adding chord track...");
+  Track * track = chord_track_new (0);
   tracklist_append_track (
     TRACKLIST, track, F_NO_PUBLISH_EVENTS,
     F_NO_RECALC_GRAPH);
   track->pinned = 1;
-  TRACKLIST->chord_track = track;
-  track =
-    marker_track_default (1);
+  self->tracklist->chord_track = track;
+
+  /* tempo */
+  g_message ("adding tempo track...");
+  track = tempo_track_default (1);
   tracklist_append_track (
     TRACKLIST, track, F_NO_PUBLISH_EVENTS,
     F_NO_RECALC_GRAPH);
   track->pinned = 1;
-  TRACKLIST->marker_track = track;
+  self->tracklist->tempo_track = track;
+
+  /* marker */
+  g_message ("adding marker track...");
+  track = marker_track_default (0);
+  tracklist_append_track (
+    TRACKLIST, track, F_NO_PUBLISH_EVENTS,
+    F_NO_RECALC_GRAPH);
+  track->pinned = 1;
+  self->tracklist->marker_track = track;
 
   /* add master channel to mixer and tracklist */
+  g_message ("adding master track...");
   track =
     track_new (
       TRACK_TYPE_MASTER, 2, _("Master"),
@@ -398,56 +642,89 @@ create_default (Project * self)
   tracklist_append_track (
     TRACKLIST, track, F_NO_PUBLISH_EVENTS,
     F_NO_RECALC_GRAPH);
-  TRACKLIST->master_track = track;
+  self->tracklist->master_track = track;
+  g_warn_if_fail (track->processor->stereo_in->l->is_project);
   tracklist_selections_add_track (
-    TRACKLIST_SELECTIONS, track, 0);
+    self->tracklist_selections, track, 0);
   self->last_selection = SELECTION_TYPE_TRACK;
+
+  engine_setup (self->audio_engine);
+
+  tracklist_expose_ports_to_backend (
+    self->tracklist);
+
+  /* init ports */
+  int max_size = 20;
+  Port ** ports =
+    calloc ((size_t) max_size, sizeof (Port *));
+  int num_ports = 0;
+  Port * port;
+  port_get_all (
+    &ports, &max_size, true, &num_ports);
+  g_message ("Initializing loaded Ports...");
+  for (int i = 0; i < num_ports; i++)
+    {
+      port = ports[i];
+      port_set_is_project (port, true);
+    }
+
+  engine_update_frames_per_tick (
+    AUDIO_ENGINE, TRANSPORT->beats_per_bar,
+    tempo_track_get_current_bpm (P_TEMPO_TRACK),
+    AUDIO_ENGINE->sample_rate);
 
   /* create untitled project */
   create_and_set_dir_and_title (
     self, ZRYTHM->create_project_path);
 
-  RECREATE_MAIN_WINDOW;
-
-  self->loaded = 1;
-
-  snap_grid_init (
-    &PROJECT->snap_grid_timeline,
-    NOTE_LENGTH_1_1);
-  quantize_options_init (
-    &PROJECT->quantize_opts_timeline,
-    NOTE_LENGTH_1_1);
-  snap_grid_init (
-    &PROJECT->snap_grid_midi,
-    NOTE_LENGTH_1_8);
-  quantize_options_init (
-    &PROJECT->quantize_opts_editor,
-    NOTE_LENGTH_1_8);
-  clip_editor_init (&PROJECT->clip_editor);
-  snap_grid_update_snap_points (
-    &PROJECT->snap_grid_timeline);
-  snap_grid_update_snap_points (
-    &PROJECT->snap_grid_midi);
-  quantize_options_update_quantize_points (
-    &PROJECT->quantize_opts_timeline);
-  quantize_options_update_quantize_points (
-    &PROJECT->quantize_opts_editor);
-
-  region_link_group_manager_init (
-    &PROJECT->region_link_group_manager);
-
-  position_set_to_bar (
-    &PROJECT->range_1, 1);
-  position_set_to_bar (
-    &PROJECT->range_2, 1);
-
-  REFRESH_MAIN_WINDOW;
-
   if (ZRYTHM_HAVE_UI)
     {
-      header_widget_set_subtitle (
-        MW_HEADER, PROJECT->title);
+      g_message ("recreating main window...");
+      recreate_main_window ();
+
+      if (mww)
+        {
+          g_message ("destroying prev window...");
+          destroy_prev_main_window (mww);
+        }
     }
+
+  self->loaded = true;
+
+  snap_grid_init (
+    &self->snap_grid_timeline,
+    NOTE_LENGTH_1_1);
+  quantize_options_init (
+    &self->quantize_opts_timeline,
+    NOTE_LENGTH_1_1);
+  snap_grid_init (
+    &self->snap_grid_midi,
+    NOTE_LENGTH_1_8);
+  quantize_options_init (
+    &self->quantize_opts_editor,
+    NOTE_LENGTH_1_8);
+  clip_editor_init (self->clip_editor);
+  snap_grid_update_snap_points (
+    &self->snap_grid_timeline);
+  snap_grid_update_snap_points (
+    &self->snap_grid_midi);
+  quantize_options_update_quantize_points (
+    &self->quantize_opts_timeline);
+  quantize_options_update_quantize_points (
+    &self->quantize_opts_editor);
+
+  region_link_group_manager_init (
+    &self->region_link_group_manager);
+
+  g_message ("setting up main window...");
+  setup_main_window (self);
+
+  /* recalculate the routing graph */
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
+
+  engine_set_run (self->audio_engine, true);
+
+  g_message ("done");
 }
 
 /**
@@ -464,6 +741,12 @@ load (
 {
   g_warn_if_fail (filename);
   char * dir = io_get_dir (filename);
+
+  if (!PROJECT)
+    {
+      /* create a temporary project struct */
+      PROJECT = project_new (ZRYTHM);
+    }
 
   set_dir (PROJECT, dir);
 
@@ -499,8 +782,11 @@ load (
             GTK_WIN_POS_CENTER_ALWAYS);
           gtk_window_set_icon_name (
             GTK_WINDOW (dialog), "zrythm");
-          gtk_widget_set_visible (
-            GTK_WIDGET (MAIN_WINDOW), 0);
+          if (MAIN_WINDOW)
+            {
+              gtk_widget_set_visible (
+                GTK_WIDGET (MAIN_WINDOW), 0);
+            }
           int res =
             gtk_dialog_run (GTK_DIALOG (dialog));
           switch (res)
@@ -515,59 +801,96 @@ load (
               break;
             }
           gtk_widget_destroy (dialog);
-          gtk_widget_set_visible (
-            GTK_WIDGET (MAIN_WINDOW), 1);
+          if (MAIN_WINDOW)
+            {
+              gtk_widget_set_visible (
+                GTK_WIDGET (MAIN_WINDOW), 1);
+            }
         }
     }
 
-  gchar * yaml;
-  GError *err = NULL;
+  bool use_backup = PROJECT->backup_dir != NULL;
+  PROJECT->loading_from_backup = use_backup;
 
-  char * project_file_path =
-    project_get_project_file_path (
-      PROJECT, PROJECT->backup_dir != NULL);
+  /* get file contents */
+  char * compressed_pj;
+  gsize compressed_pj_size;
+  GError *err = NULL;
+  char * project_file_path_alloc =
+    project_get_path (
+      PROJECT, PROJECT_PATH_PROJECT_FILE,
+      use_backup);
+  char project_file_path[1600];
+  strcpy (
+    project_file_path, project_file_path_alloc);
   g_message (
-    "loading project file %s",
-    project_file_path);
+    "%s: loading project file %s",
+    __func__, project_file_path);
   g_file_get_contents (
-    project_file_path, &yaml, NULL, &err);
+    project_file_path, &compressed_pj,
+    &compressed_pj_size, &err);
   if (err != NULL)
     {
-      // Report error to user, and free error
-      char * str =
-        g_strdup_printf (
-          "Unable to read file: %s",
-          err->message);
-      ui_show_error_message (
-        MAIN_WINDOW,
-        str);
-      g_free (str);
+      /* Report error to user, and free error */
+      char str[800];
+      sprintf (
+        str, _("Unable to read file: %s"),
+        err->message);
+      ui_show_error_message (MAIN_WINDOW, str);
       g_error_free (err);
       RETURN_ERROR
     }
-  g_free (project_file_path);
 
-  Project * prj = project_deserialize (yaml);
-  g_free (yaml);
-  if (!prj)
+  /* decompress */
+  g_message (
+    "%s: decompressing project...", __func__);
+  char * yaml = NULL;
+  size_t yaml_size;
+  char * error_msg =
+    project_decompress (
+      &yaml, &yaml_size,
+      PROJECT_DECOMPRESS_DATA,
+      compressed_pj, compressed_pj_size,
+      PROJECT_DECOMPRESS_DATA);
+  g_free (compressed_pj);
+  if (error_msg)
+    {
+      g_warning (
+        "Failed to decompress project file: %s",
+        error_msg);
+      ui_show_error_message (
+        MAIN_WINDOW, error_msg);
+      g_free (error_msg);
+      return -1;
+    }
+
+  /* make string null-terminated */
+  yaml =
+    realloc (
+      yaml,
+      yaml_size + sizeof (char));
+  yaml[yaml_size] = '\0';
+
+  Project * self = project_deserialize (yaml);
+  free (yaml);
+  if (!self)
     {
       g_critical ("Failed to load project");
       return -1;
     }
-  prj->backup_dir =
+  self->backup_dir =
     g_strdup (PROJECT->backup_dir);
 
   char * version = zrythm_get_version (0);
   if (!string_is_equal (
-        prj->version,
-        version, 1))
+        self->version, version, 1))
     {
       char * str =
         g_strdup_printf (
           _("This project was created with a "
-            "different version of Zrythm (%s). "
+            "different version of %s (%s). "
             "It may not work correctly."),
-          prj->version);
+          PROGRAM_NAME, self->version);
       ui_show_message_full (
         GTK_WINDOW (MAIN_WINDOW),
         GTK_MESSAGE_WARNING, str);
@@ -575,7 +898,7 @@ load (
     }
   g_free (version);
 
-  if (prj == NULL)
+  if (self == NULL)
     {
       ui_show_error_message (
         MAIN_WINDOW,
@@ -592,97 +915,143 @@ load (
         g_strdup (ZRYTHM->create_project_path);
     }
 
-  int loading_while_running = PROJECT->loaded;
-  if (loading_while_running)
+  MainWindowWidget * mww = NULL;
+  if (ZRYTHM_HAVE_UI)
     {
-      project_tear_down (PROJECT);
-      PROJECT = prj;
-
-      DESTROY_PREV_MAIN_WINDOW;
+      g_message ("hiding prev window...");
+      mww = hide_prev_main_window ();
     }
 
-  g_message ("initing loaded structures");
-  PROJECT = prj;
+  if (PROJECT)
+    {
+      g_message (
+        "%s: freeing previous project...",
+        __func__);
+      object_free_w_func_and_null (
+        project_free, PROJECT);
+    }
+
+  g_message (
+    "%s: initing loaded structures", __func__);
+  PROJECT = self;
 
   /* re-update paths for the newly loaded project */
-  set_dir (prj, dir);
+  set_dir (self, dir);
 
-  undo_manager_init (&PROJECT->undo_manager, 1);
-  engine_init (AUDIO_ENGINE, 1);
+  /* set the tempo track */
+  Tracklist * tracklist = self->tracklist;
+  for (int i = 0; i < tracklist->num_tracks; i++)
+    {
+      Track * track = tracklist->tracks[i];
 
-  char * filepath_noext = g_path_get_basename (dir);
-  PROJECT->title = filepath_noext;
+      if (track->type == TRACK_TYPE_TEMPO)
+        {
+          tracklist->tempo_track = track;
+          break;
+        }
+    }
 
+  char * filepath_noext =
+    g_path_get_basename (dir);
   g_free (dir);
 
-  tracklist_init_loaded (&PROJECT->tracklist);
+  self->title = filepath_noext;
+
+  engine_init_loaded (self->audio_engine);
+  undo_manager_init_loaded (self->undo_manager);
+
   clip_editor_init_loaded (CLIP_EDITOR);
+  tracklist_init_loaded (self->tracklist);
+
+  engine_update_frames_per_tick (
+    AUDIO_ENGINE, TRANSPORT->beats_per_bar,
+    tempo_track_get_current_bpm (P_TEMPO_TRACK),
+    AUDIO_ENGINE->sample_rate);
 
   /* init ports */
   int max_size = 20;
   Port ** ports =
     calloc ((size_t) max_size, sizeof (Port *));
   int num_ports = 0;
-  Port * port;
   port_get_all (
     &ports, &max_size, true, &num_ports);
   g_message ("Initializing loaded Ports...");
   for (int i = 0; i < num_ports; i++)
     {
-      port = ports[i];
-      port_init_loaded (port);
+      Port * port = ports[i];
+      port_init_loaded (port, true);
     }
-  free (ports);
 
   midi_mappings_init_loaded (
-    PROJECT->midi_mappings);
+    self->midi_mappings);
 
   arranger_selections_init_loaded (
     (ArrangerSelections *)
-    &PROJECT->timeline_selections);
+    &self->timeline_selections, true);
   arranger_selections_init_loaded (
     (ArrangerSelections *)
-    &PROJECT->midi_arranger_selections);
+    &self->midi_arranger_selections, true);
   arranger_selections_init_loaded (
     (ArrangerSelections *)
-    &PROJECT->chord_selections);
+    &self->chord_selections, true);
   arranger_selections_init_loaded (
     (ArrangerSelections *)
-    &PROJECT->automation_selections);
+    &self->automation_selections, true);
 
   tracklist_selections_init_loaded (
-    &PROJECT->tracklist_selections);
+    self->tracklist_selections);
 
   snap_grid_update_snap_points (
-    &PROJECT->snap_grid_timeline);
+    &self->snap_grid_timeline);
   snap_grid_update_snap_points (
-    &PROJECT->snap_grid_midi);
+    &self->snap_grid_midi);
   quantize_options_update_quantize_points (
-    &PROJECT->quantize_opts_timeline);
+    &self->quantize_opts_timeline);
   quantize_options_update_quantize_points (
-    &PROJECT->quantize_opts_editor);
+    &self->quantize_opts_editor);
 
   region_link_group_manager_init_loaded (
     REGION_LINK_GROUP_MANAGER);
 
-  RECREATE_MAIN_WINDOW;
+  if (ZRYTHM_HAVE_UI)
+    {
+      g_message ("recreating main window...");
+      recreate_main_window ();
+
+      if (mww)
+        {
+          g_message ("destroying prev window...");
+          destroy_prev_main_window (mww);
+        }
+    }
 
   /* sanity check */
-  project_sanity_check (PROJECT);
+  project_sanity_check (self);
 
-  PROJECT->loaded = 1;
+  engine_setup (self->audio_engine);
+
+  for (int i = 0; i < num_ports; i++)
+    {
+      Port * port = ports[i];
+      if (port_is_exposed_to_backend (port))
+        {
+          port_set_expose_to_backend (port, true);
+        }
+    }
+  object_zero_and_free (ports);
+
+  self->loaded = true;
+  self->loading_from_backup = false;
+
   g_message ("project loaded");
 
   /* recalculate the routing graph */
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
-  REFRESH_MAIN_WINDOW;
+  g_message ("setting up main window...");
+  setup_main_window (self);
 
-  if (ZRYTHM_HAVE_UI)
-    {
-      header_widget_set_subtitle (
-        MW_HEADER, PROJECT->title);
-    }
+  engine_set_run (self->audio_engine, true);
 
   return 0;
 }
@@ -704,10 +1073,14 @@ project_load (
   char *    filename,
   const int is_template)
 {
+  g_message (
+    "%s: filename: %s, is template: %d",
+    __func__, filename, is_template);
+
   if (filename)
     {
       int ret = load (filename, is_template);
-      if (ret != 0)
+      if (ret)
         {
           ui_show_error_message (
             NULL,
@@ -725,8 +1098,8 @@ project_load (
             return -1;
 
           g_message (
-            "creating project %s",
-            ZRYTHM->create_project_path);
+            "%s: creating project %s",
+            __func__, ZRYTHM->create_project_path);
           create_default (PROJECT);
         }
     }
@@ -735,7 +1108,7 @@ project_load (
       create_default (PROJECT);
     }
 
-  engine_activate (AUDIO_ENGINE);
+  engine_activate (AUDIO_ENGINE, true);
 
   /* connect channel inputs to hardware. has to
    * be done after engine activation */
@@ -811,114 +1184,123 @@ project_autosave_cb (
 }
 
 /**
- * Sets if the project has range and updates UI.
- */
-void
-project_set_has_range (int has_range)
-{
-  PROJECT->has_range = has_range;
-
-  EVENTS_PUSH (ET_RANGE_SELECTION_CHANGED, NULL);
-}
-
-/**
- * Returns the backups dir for the given Project.
- */
-char *
-project_get_backups_dir (
-  Project * self)
-{
-  g_warn_if_fail (self->dir);
-  return
-    g_build_filename (
-      self->dir,
-      PROJECT_BACKUPS_DIR,
-      NULL);
-}
-
-/**
- * Returns the exports dir for the given Project.
+ * Returns the requested project path as a newly
+ * allocated string.
  *
- * Must be g_free()'d.
- */
-char *
-project_get_exports_dir (
-  Project * self)
-{
-  g_warn_if_fail (self->dir);
-  return
-    g_build_filename (
-      self->dir,
-      PROJECT_EXPORTS_DIR,
-      NULL);
-}
-
-/**
- * Returns the states dir for the given Project.
- *
- * @param is_backup 1 to get the states dir of the
+ * @param backup Whether to get the path for the
  *   current backup instead of the main project.
  */
 char *
-project_get_states_dir (
-  Project * self,
-  const int is_backup)
+project_get_path (
+  Project *     self,
+  ProjectPath   path,
+  bool          backup)
 {
-  g_warn_if_fail (self->dir);
-  if (is_backup)
-    return
-      g_build_filename (
-        self->backup_dir,
-        PROJECT_STATES_DIR,
-        NULL);
-  else
-    return
-      g_build_filename (
-        self->dir,
-        PROJECT_STATES_DIR,
-        NULL);
+  g_return_val_if_fail (self->dir, NULL);
+  char * dir =
+    backup ? self->backup_dir : self->dir;
+  switch (path)
+    {
+    case PROJECT_PATH_BACKUPS:
+      return
+        g_build_filename (
+          dir, PROJECT_BACKUPS_DIR, NULL);
+    case PROJECT_PATH_EXPORTS:
+      return
+        g_build_filename (
+          dir, PROJECT_EXPORTS_DIR, NULL);
+    case PROJECT_PATH_PLUGINS:
+      return
+        g_build_filename (
+          dir, PROJECT_PLUGINS_DIR, NULL);
+    case PROJECT_PATH_PLUGIN_STATES:
+      {
+        char * plugins_dir =
+          project_get_path (
+            self, PROJECT_PATH_PLUGINS, backup);
+        char * ret =
+          g_build_filename (
+            plugins_dir, PROJECT_PLUGIN_STATES_DIR,
+            NULL);
+        g_free (plugins_dir);
+        return ret;
+      }
+      break;
+    case PROJECT_PATH_PLUGIN_EXT_COPIES:
+      {
+        char * plugins_dir =
+          project_get_path (
+            self, PROJECT_PATH_PLUGINS, backup);
+        char * ret =
+          g_build_filename (
+            plugins_dir,
+            PROJECT_PLUGIN_EXT_COPIES_DIR,
+            NULL);
+        g_free (plugins_dir);
+        return ret;
+      }
+      break;
+    case PROJECT_PATH_PLUGIN_EXT_LINKS:
+      {
+        char * plugins_dir =
+          project_get_path (
+            self, PROJECT_PATH_PLUGINS, backup);
+        char * ret =
+          g_build_filename (
+            plugins_dir,
+            PROJECT_PLUGIN_EXT_LINKS_DIR,
+            NULL);
+        g_free (plugins_dir);
+        return ret;
+      }
+      break;
+    case PROJECT_PATH_POOL:
+      return
+        g_build_filename (
+          self->dir, PROJECT_POOL_DIR, NULL);
+    case PROJECT_PATH_PROJECT_FILE:
+      if (backup)
+        {
+          return
+            g_build_filename (
+              self->backup_dir, PROJECT_FILE, NULL);
+        }
+      else
+        {
+          return
+            g_build_filename (
+              self->dir, PROJECT_FILE, NULL);
+        }
+      break;
+    default:
+      g_return_val_if_reached (NULL);
+    }
+  g_return_val_if_reached (NULL);
 }
 
 /**
- * Returns the audio dir for the given Project.
+ * Creates an empty project object.
  */
-char *
-project_get_pool_dir (
-  Project * self)
+Project *
+project_new (
+  Zrythm * _zrythm)
 {
-  g_warn_if_fail (self->dir);
-  return
-    g_build_filename (
-      self->dir,
-      PROJECT_POOL_DIR,
-      NULL);
-}
+  g_message ("%s: Creating...", __func__);
 
-/**
- * Returns the full project file (project.yml)
- * path.
- *
- * @param is_backup 1 to get the states dir of the
- *   current backup instead of the main project.
- */
-char *
-project_get_project_file_path (
-  Project * self,
-  const int is_backup)
-{
-  g_warn_if_fail (self->dir);
-  if (is_backup)
-    return
-      g_build_filename (
-        self->backup_dir,
-        PROJECT_FILE,
-        NULL);
-  else
-    return
-      g_build_filename (
-        self->dir,
-        PROJECT_FILE,
-        NULL);
+  Project * self = object_new (Project);
+
+  if (_zrythm)
+    {
+      _zrythm->project = self;
+    }
+
+  self->clip_editor = clip_editor_new ();
+  self->tracklist_selections =
+    tracklist_selections_new (true);
+
+  g_message ("%s: done", __func__);
+
+  return self;
 }
 
 /**
@@ -927,21 +1309,33 @@ project_get_project_file_path (
 typedef struct ProjectSaveData
 {
   /** Project clone (with memcpy). */
-  Project  project;
+  Project   project;
 
   /** Full path to save to. */
-  char *   project_file_path;
+  char *    project_file_path;
 
-  bool     is_backup;
+  bool      is_backup;
 
   /** To be set to true when the thread finishes. */
-  bool     finished;
+  bool      finished;
 
-  bool     show_notification;
+  bool      show_notification;
 
   /** Whether an error occured during saving. */
-  bool     has_error;
+  bool      has_error;
 } ProjectSaveData;
+
+static void
+project_save_data_free (
+  ProjectSaveData * self)
+{
+  if (self->project_file_path)
+    {
+      g_free_and_null (self->project_file_path);
+    }
+
+  object_zero_and_free (self);
+}
 
 /**
  * Thread that does the serialization and saving.
@@ -950,24 +1344,64 @@ static void *
 serialize_project_thread (
   ProjectSaveData * data)
 {
+  char * compressed_yaml;
+  char * error_msg;
+  size_t compressed_size;
+
+  /* generate yaml */
+  g_message ("serializing project to yaml...");
   GError *err = NULL;
+  gint64 time_before = g_get_monotonic_time ();
   char * yaml = project_serialize (&data->project);
+  gint64 time_after = g_get_monotonic_time ();
+  g_message (
+    "time to serialize: %ldms",
+    (long) (time_after - time_before) / 1000);
   if (!yaml)
     {
+      g_critical ("Failed to serialize project");
       data->has_error = true;
       goto serialize_end;
     }
-  g_file_set_contents (
-    data->project_file_path, yaml, -1, &err);
+
+  /* compress */
+  error_msg =
+    project_compress (
+      &compressed_yaml, &compressed_size,
+      PROJECT_COMPRESS_DATA,
+      yaml, strlen (yaml) * sizeof (char),
+      PROJECT_COMPRESS_DATA);
   g_free (yaml);
+  if (error_msg)
+    {
+      g_critical (
+        "Failed to compress project file: %s",
+        error_msg);
+      ui_show_error_message (
+        MAIN_WINDOW, error_msg);
+      g_free (error_msg);
+      data->has_error = true;
+      goto serialize_end;
+    }
+
+  /* set file contents */
+  g_message (
+    "%s: saving project file...", __func__);
+  g_file_set_contents (
+    data->project_file_path, compressed_yaml,
+    (gssize) compressed_size, &err);
+  free (compressed_yaml);
   if (err != NULL)
     {
-      g_warning (
-        "Unable to write project file: %s",
-        err->message);
+      g_critical (
+        "%s: Unable to write project file: %s",
+        __func__, err->message);
       g_error_free (err);
       data->has_error = true;
     }
+
+  g_message (
+    "%s: successfully saved project", __func__);
 
 serialize_end:
   data->finished = true;
@@ -1001,13 +1435,14 @@ project_idle_saved_cb (
       if (data->show_notification)
         ui_show_notification (_("Project saved."));
     }
-  g_free (data->project_file_path);
 
   if (ZRYTHM_HAVE_UI)
     {
-      header_widget_set_subtitle (
-        MW_HEADER, PROJECT->title);
+      EVENTS_PUSH (ET_PROJECT_SAVED, PROJECT);
     }
+
+  object_free_w_func_and_null (
+    project_save_data_free, data);
 
   return G_SOURCE_REMOVE;
 }
@@ -1029,8 +1464,8 @@ int
 project_save (
   Project *    self,
   const char * _dir,
-  const int    is_backup,
-  const int    show_notification,
+  const bool   is_backup,
+  const bool   show_notification,
   const bool   async)
 {
   int i, j;
@@ -1041,14 +1476,7 @@ project_save (
    * exist */
   set_dir (self, dir);
   io_mkdir (PROJECT->dir);
-  char * exports_dir =
-    project_get_exports_dir (PROJECT);
-  io_mkdir (exports_dir);
-  char * pool_dir =
-    project_get_pool_dir (PROJECT);
-  io_mkdir (pool_dir);
-  g_free (exports_dir);
-  g_free (pool_dir);
+  char * tmp;
 
   /* set the title */
   char * basename =
@@ -1064,13 +1492,24 @@ project_save (
   if (is_backup)
     set_and_create_next_available_backup_dir (self);
 
+#define MK_PROJECT_DIR(_path) \
+  tmp = \
+    project_get_path ( \
+      self, PROJECT_PATH_##_path, is_backup); \
+  io_mkdir (tmp); \
+  g_free_and_null (tmp)
+
+  MK_PROJECT_DIR (EXPORTS);
+  MK_PROJECT_DIR (POOL);
+  MK_PROJECT_DIR (PLUGIN_STATES);
+  MK_PROJECT_DIR (PLUGIN_EXT_COPIES);
+  MK_PROJECT_DIR (PLUGIN_EXT_LINKS);
+
   /* write plugin states, prepare channels for
    * serialization, */
   Track * track;
   Channel * ch;
   Plugin * pl;
-  char * states_dir =
-    project_get_states_dir (self, is_backup);
   for (i = 0; i < TRACKLIST->num_tracks; i++)
     {
       track = TRACKLIST->tracks[i];
@@ -1094,22 +1533,11 @@ project_save (
             continue;
 
           /* save state */
-          char tr_name[900];
-          io_escape_dir_name (
-            tr_name, track->name);
-          char tmp[980];
-          sprintf (
-            tmp, "%s_%d", tr_name, j);
-          char * state_dir_plugin =
-            g_build_filename (
-              states_dir, tmp, NULL);
-          int ret = -1;
 #ifdef HAVE_CARLA
           if (pl->descr->open_with_carla)
             {
-              ret =
-                carla_native_plugin_save_state (
-                  pl->carla, state_dir_plugin);
+              carla_native_plugin_save_state (
+                pl->carla, is_backup);
             }
           else
             {
@@ -1117,9 +1545,8 @@ project_save (
               switch (pl->descr->protocol)
                 {
                 case PROT_LV2:
-                  ret =
-                    lv2_plugin_save_state_to_file (
-                      pl->lv2, state_dir_plugin);
+                  lv2_state_save_to_file (
+                    pl->lv2, is_backup);
                   break;
                 default:
                   g_warn_if_reached ();
@@ -1128,17 +1555,14 @@ project_save (
 #ifdef HAVE_CARLA
             }
 #endif
-          g_free (state_dir_plugin);
-          g_return_val_if_fail (ret == 0, -1);
         }
     }
-  g_free (states_dir);
 
   ProjectSaveData * data =
-    calloc (1, sizeof (ProjectSaveData));
+    object_new (ProjectSaveData);
   data->project_file_path =
-    project_get_project_file_path (
-      self, is_backup);
+    project_get_path (
+      self, PROJECT_PATH_PROJECT_FILE, is_backup);
   data->show_notification = show_notification;
   data->is_backup = is_backup;
   memcpy (

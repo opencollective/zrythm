@@ -26,16 +26,24 @@
 #ifndef __TEST_HELPERS_ZRYTHM_H__
 #define __TEST_HELPERS_ZRYTHM_H__
 
+#include "zrythm-test-config.h"
+
+#include <signal.h>
+
 #include "audio/chord_track.h"
 #include "audio/engine_dummy.h"
 #include "audio/marker_track.h"
 #include "audio/tracklist.h"
 #include <project.h>
+#include "utils/backtrace.h"
 #include "utils/cairo.h"
 #include "utils/objects.h"
 #include "utils/flags.h"
+#include "utils/io.h"
+#include "utils/log.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <glib.h>
 #include <glib/gi18n.h>
@@ -82,6 +90,25 @@
   } G_STMT_END
 #endif
 
+static void
+segv_handler (int sig)
+{
+  char prefix[200];
+#ifdef _WOE32
+  strcpy (
+    prefix, _("Error - Backtrace:\n"));
+#else
+  sprintf (
+    prefix,
+    _("Error: %s - Backtrace:\n"), strsignal (sig));
+#endif
+  char * bt = backtrace_get (prefix, 100);
+
+  g_warning ("%s", bt);
+
+  exit (sig);
+}
+
 /**
  * To be called by every test's main to initialize
  * Zrythm to default values.
@@ -89,17 +116,44 @@
 void
 test_helper_zrythm_init ()
 {
-  object_utils_init ();
+  object_free_w_func_and_null (
+    zrythm_free, ZRYTHM);
 
-  ZRYTHM = calloc (1, sizeof (Zrythm));
-  ZRYTHM->symap = symap_new ();
-  ZRYTHM->testing = 1;
-  ZRYTHM->have_ui = 0;
-  PROJECT = calloc (1, sizeof (Project));
+  ZRYTHM = zrythm_new (false, true);
+
+  /* init logging to custom file */
+  char * tmp_log_dir =
+    g_build_filename (
+      g_get_tmp_dir (), "zrythm_test_logs", NULL);
+  io_mkdir (tmp_log_dir);
+  char * tmp_log_file_template =
+    g_build_filename (
+      tmp_log_dir, "XXXXXX.log", NULL);
+  g_free (tmp_log_dir);
+  int tmp_log_file =
+    g_mkstemp (tmp_log_file_template);
+  g_free (tmp_log_file_template);
+  log_init_with_file (LOG, true, tmp_log_file);
+  log_init_writer_idle (LOG, 1);
+
   ZRYTHM->create_project_path =
     g_dir_make_tmp (
       "zrythm_test_project_XXXXXX", NULL);
   project_load (NULL, 0);
+
+  /* set a segv handler */
+  signal (SIGSEGV, segv_handler);
+}
+
+/**
+ * To be called by every test's main at the end to
+ * clean up (TODO).
+ */
+void
+test_helper_zrythm_cleanup ()
+{
+  object_free_w_func_and_null (
+    zrythm_free, ZRYTHM);
 }
 
 /**

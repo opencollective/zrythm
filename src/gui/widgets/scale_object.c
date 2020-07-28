@@ -26,6 +26,7 @@
 #include "project.h"
 #include "utils/cairo.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 /**
  * Recreates the pango layouts for drawing.
@@ -80,37 +81,12 @@ scale_object_draw (
     scale_object_is_selected (self), false, false);
   gdk_cairo_set_source_rgba (cr, &color);
 
-  cairo_rectangle (
-    cr, obj->full_rect.x - rect->x,
+  z_cairo_rounded_rectangle (
+    cr,
+    obj->full_rect.x - rect->x,
     obj->full_rect.y - rect->y,
-    obj->full_rect.width -
-      SCALE_OBJECT_WIDGET_TRIANGLE_W,
-    obj->full_rect.height);
-  cairo_fill (cr);
-
-  cairo_move_to (
-    cr,
-    (obj->full_rect.x + obj->full_rect.width) -
-      (SCALE_OBJECT_WIDGET_TRIANGLE_W + rect->x),
-    obj->full_rect.y - rect->y);
-  cairo_line_to (
-    cr,
-    (obj->full_rect.x + obj->full_rect.width) -
-      rect->x,
-    (obj->full_rect.y + obj->full_rect.height) -
-      rect->y);
-  cairo_line_to (
-    cr,
-    (obj->full_rect.x + obj->full_rect.width) -
-      (SCALE_OBJECT_WIDGET_TRIANGLE_W + rect->x),
-    (obj->full_rect.y + obj->full_rect.height) -
-      rect->y);
-  cairo_line_to (
-    cr,
-    (obj->full_rect.x + obj->full_rect.width) -
-      (SCALE_OBJECT_WIDGET_TRIANGLE_W + rect->x),
-    obj->full_rect.y - rect->y);
-  cairo_close_path (cr);
+    obj->full_rect.width,
+    obj->full_rect.height, 1, 4);
   cairo_fill (cr);
 
   char * str =

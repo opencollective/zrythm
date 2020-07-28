@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2018-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -17,16 +17,18 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
+
 #include "project.h"
 #include "actions/actions.h"
 #include "audio/master_track.h"
-#include "audio/mixer.h"
 #include "audio/track.h"
 #include "audio/tracklist.h"
 #include "audio/transport.h"
 #include "gui/accel.h"
 #include "gui/backend/arranger_selections.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/arranger.h"
 #include "gui/widgets/audio_arranger.h"
 #include "gui/widgets/audio_editor_space.h"
@@ -62,9 +64,11 @@
 #include "gui/widgets/timeline_toolbar.h"
 #include "gui/widgets/top_bar.h"
 #include "gui/widgets/tracklist.h"
+#include "settings/settings.h"
 #include "utils/gtk.h"
 #include "utils/io.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -83,10 +87,10 @@ on_main_window_destroy (MainWindowWidget * self,
 
   if (PROJECT->loaded)
     {
-      /* set this to NULL to stop events from
-       * getting fired. this prevents some segfaults
-       * on shutdown */
-      ZRYTHM->event_queue = NULL;
+      /* stop events from getting fired. this
+       * prevents some segfaults on shutdown */
+      event_manager_stop_events (EVENT_MANAGER);
+
       g_application_quit (
         G_APPLICATION (zrythm_app));
     }
@@ -111,7 +115,7 @@ main_window_widget_new (ZrythmApp * _app)
   MainWindowWidget * self = g_object_new (
     MAIN_WINDOW_WIDGET_TYPE,
     "application", G_APPLICATION (_app),
-    "title", "Zrythm",
+    "title", PROGRAM_NAME,
     NULL);
 
   return self;
@@ -169,118 +173,6 @@ main_window_get_last_focused_arranger_selections (
   return sel;
 }
 
-void
-main_window_widget_refresh (
-  MainWindowWidget * self)
-{
-  header_widget_setup (
-    MW_HEADER,
-    PROJECT->title);
-
-  /* setup center dock */
-  center_dock_widget_setup (MW_CENTER_DOCK);
-
-  editor_toolbar_widget_setup (
-    MW_EDITOR_TOOLBAR);
-  timeline_toolbar_widget_setup (
-    MW_TIMELINE_TOOLBAR);
-
-  /* setup piano roll */
-  if (MW_BOT_DOCK_EDGE && MW_CLIP_EDITOR)
-    {
-      clip_editor_widget_setup (
-        MW_CLIP_EDITOR);
-    }
-
-  // set icons
-  GtkWidget * image =
-    resources_get_icon (
-      ICON_TYPE_ZRYTHM, "zrythm.svg");
-  gtk_window_set_icon (
-    GTK_WINDOW (self),
-    gtk_image_get_pixbuf (GTK_IMAGE (image)));
-
-  /* setup top and bot bars */
-  top_bar_widget_refresh (self->top_bar);
-  bot_bar_widget_setup (self->bot_bar);
-
-  /* setup mixer */
-  g_warn_if_fail (
-    P_MASTER_TRACK && P_MASTER_TRACK->channel);
-  mixer_widget_setup (
-    MW_MIXER, P_MASTER_TRACK->channel);
-
-  gtk_window_maximize (
-    GTK_WINDOW (self));
-
-  /* show track selection info */
-  g_warn_if_fail (TRACKLIST_SELECTIONS->tracks[0]);
-  EVENTS_PUSH (ET_TRACK_CHANGED,
-               TRACKLIST_SELECTIONS->tracks[0]);
-  EVENTS_PUSH (
-    ET_ARRANGER_SELECTIONS_CHANGED, TL_SELECTIONS);
-  event_viewer_widget_refresh (
-    MW_TIMELINE_EVENT_VIEWER);
-
-  EVENTS_PUSH (
-    ET_MAIN_WINDOW_LOADED, NULL);
-}
-
-static void
-main_window_widget_class_init (
-  MainWindowWidgetClass * _klass)
-{
-  GtkWidgetClass * klass = GTK_WIDGET_CLASS (_klass);
-  resources_set_class_template (
-    klass, "main_window.ui");
-
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    main_box);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    header);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    top_bar);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    center_box);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    center_dock);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    bot_bar);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    revealer);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    close_notification_button);
-  gtk_widget_class_bind_template_child (
-    klass,
-    MainWindowWidget,
-    notification_label);
-  gtk_widget_class_bind_template_callback (
-    klass,
-    on_main_window_destroy);
-  gtk_widget_class_bind_template_callback (
-    klass,
-    on_state_changed);
-
-  gtk_widget_class_set_css_name (klass,
-                                 "main-window");
-}
-
 static gboolean
 on_key_release (
   GtkWidget *widget,
@@ -319,6 +211,150 @@ on_key_action (
     }
 
   return FALSE;
+}
+
+void
+main_window_widget_setup (
+  MainWindowWidget * self)
+{
+  g_return_if_fail (self);
+
+  g_message ("Setting up...");
+
+  if (self->setup)
+    {
+      g_message ("already set up");
+      return;
+    }
+
+  header_widget_setup (MW_HEADER, PROJECT->title);
+
+  /* setup center dock */
+  center_dock_widget_setup (MW_CENTER_DOCK);
+
+  editor_toolbar_widget_setup (
+    MW_EDITOR_TOOLBAR);
+  timeline_toolbar_widget_setup (
+    MW_TIMELINE_TOOLBAR);
+
+  /* setup piano roll */
+  if (MW_BOT_DOCK_EDGE && MW_CLIP_EDITOR)
+    {
+      clip_editor_widget_setup (
+        MW_CLIP_EDITOR);
+    }
+
+  // set icons
+  GtkWidget * image =
+    resources_get_icon (
+      ICON_TYPE_ZRYTHM, "zrythm.svg");
+  gtk_window_set_icon (
+    GTK_WINDOW (self),
+    gtk_image_get_pixbuf (GTK_IMAGE (image)));
+
+  /* setup top and bot bars */
+  top_bar_widget_refresh (self->top_bar);
+  bot_bar_widget_setup (self->bot_bar);
+
+  /* setup mixer */
+  g_warn_if_fail (
+    P_MASTER_TRACK && P_MASTER_TRACK->channel);
+  mixer_widget_setup (
+    MW_MIXER, P_MASTER_TRACK->channel);
+
+  gtk_window_maximize (GTK_WINDOW (self));
+
+  /* show track selection info */
+  g_warn_if_fail (TRACKLIST_SELECTIONS->tracks[0]);
+  EVENTS_PUSH (ET_TRACK_CHANGED,
+               TRACKLIST_SELECTIONS->tracks[0]);
+  EVENTS_PUSH (
+    ET_ARRANGER_SELECTIONS_CHANGED, TL_SELECTIONS);
+  event_viewer_widget_refresh (
+    MW_TIMELINE_EVENT_VIEWER);
+
+  EVENTS_PUSH (
+    ET_MAIN_WINDOW_LOADED, NULL);
+
+  self->setup = true;
+
+  g_message ("done");
+}
+
+/**
+ * Prepare for finalization.
+ */
+void
+main_window_widget_tear_down (
+  MainWindowWidget * self)
+{
+  g_message ("tearing down %p...", self);
+
+  self->setup = false;
+
+  if (self->center_dock)
+    {
+      center_dock_widget_tear_down (
+        self->center_dock);
+    }
+
+  gtk_window_set_application (
+    GTK_WINDOW (self), NULL);
+
+  g_message ("done");
+}
+
+static void
+main_window_finalize (
+  MainWindowWidget * self)
+{
+  g_message ("finalizing...");
+
+  G_OBJECT_CLASS (
+    main_window_widget_parent_class)->
+      finalize (G_OBJECT (self));
+
+  g_message ("done");
+}
+
+static void
+main_window_widget_class_init (
+  MainWindowWidgetClass * _klass)
+{
+  GtkWidgetClass * klass =
+    GTK_WIDGET_CLASS (_klass);
+  resources_set_class_template (
+    klass, "main_window.ui");
+
+  gtk_widget_class_set_css_name (
+    klass, "main-window");
+
+#define BIND_CHILD(x) \
+  gtk_widget_class_bind_template_child ( \
+    klass, MainWindowWidget, x)
+
+  BIND_CHILD (main_box);
+  BIND_CHILD (header);
+  BIND_CHILD (top_bar);
+  BIND_CHILD (center_box);
+  BIND_CHILD (center_dock);
+  BIND_CHILD (bot_bar);
+  BIND_CHILD (revealer);
+  BIND_CHILD (close_notification_button);
+  BIND_CHILD (notification_label);
+  gtk_widget_class_bind_template_callback (
+    klass,
+    on_main_window_destroy);
+  gtk_widget_class_bind_template_callback (
+    klass,
+    on_state_changed);
+
+#undef BIND_CHILD
+
+  GObjectClass * oklass =
+    G_OBJECT_CLASS (klass);
+  oklass->finalize =
+    (GObjectFinalizeFunc) main_window_finalize;
 }
 
 static void

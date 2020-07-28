@@ -113,6 +113,12 @@ typedef enum TrackType
   TRACK_TYPE_MARKER,
 
   /**
+   * Special track for BPM (tempo) and time
+   * signature events.
+   */
+  TRACK_TYPE_TEMPO,
+
+  /**
    * Buses are channels that receive audio input
    * and have effects on their channel strip. They
    * are similar to Group Tracks, except that they
@@ -148,13 +154,17 @@ typedef enum TrackType
 static const cyaml_strval_t
 track_type_strings[] =
 {
-  { "Instrument",     TRACK_TYPE_INSTRUMENT    },
-  { "Audio",          TRACK_TYPE_AUDIO   },
-  { "MIDI",           TRACK_TYPE_MIDI   },
-  { "Master",         TRACK_TYPE_MASTER   },
-  { "Chord",          TRACK_TYPE_CHORD   },
-  { "Audio Bus",      TRACK_TYPE_AUDIO_BUS   },
-  { "MIDI Bus",       TRACK_TYPE_MIDI_BUS   },
+  { __("Instrument"),   TRACK_TYPE_INSTRUMENT    },
+  { __("Audio"),        TRACK_TYPE_AUDIO   },
+  { __("Master"),       TRACK_TYPE_MASTER   },
+  { __("Chord"),        TRACK_TYPE_CHORD   },
+  { __("Marker"),       TRACK_TYPE_MARKER   },
+  { __("Tempo"),        TRACK_TYPE_TEMPO   },
+  { __("Audio FX"),     TRACK_TYPE_AUDIO_BUS   },
+  { __("Audio Group"),  TRACK_TYPE_AUDIO_GROUP   },
+  { __("MIDI"),         TRACK_TYPE_MIDI   },
+  { __("MIDI FX"),      TRACK_TYPE_MIDI_BUS   },
+  { __("MIDI Group"),   TRACK_TYPE_MIDI_GROUP   },
 };
 
 /**
@@ -203,41 +213,29 @@ typedef struct Track
    * through unpinned tracks, can just check this
    * variable.
    */
-  int                 pinned;
+  bool                pinned;
 
   /** Flag to set automations visible or not. */
-  int                 automation_visible;
+  bool                automation_visible;
 
   /** Flag to set track lanes visible or not. */
-  int                 lanes_visible;
+  bool                lanes_visible;
 
   /** Whole Track is visible or not. */
-  int                 visible;
+  bool                visible;
 
   /** Height of the main part (without lanes). */
   int                 main_height;
 
-  /**
-   * Control port for muting the (channel)
-   * fader.
-   *
-   * It is here instead of in Fader because some
-   * tracks don't have channels.
-   */
-  Port *              mute;
-
-  /** Soloed or not. */
-  int                 solo;
-
   /** Recording or not. */
-  int                 recording;
+  bool                recording;
 
   /**
    * Active (enabled) or not.
    *
    * Disabled tracks should be ignored in routing.
    */
-  int                 active;
+  bool                active;
 
   /**
    * Track color.
@@ -275,6 +273,13 @@ typedef struct Track
 
   /* ==== INSTRUMENT/MIDI/AUDIO TRACK END ==== */
 
+  /* ==== AUDIO TRACK ==== */
+
+  /** Real-time time stretcher. */
+  Stretcher *          rt_stretcher;
+
+  /* ==== AUDIO TRACK END ==== */
+
   /* ==== CHORD TRACK ==== */
 
   /**
@@ -305,6 +310,16 @@ typedef struct Track
 
   /* ==== MARKER TRACK END ==== */
 
+  /* ==== TEMPO TRACK ==== */
+
+  /** Automatable BPM control. */
+  Port *              bpm_port;
+
+  /** Automatable time sig control. */
+  Port *              time_sig_port;
+
+  /* ==== TEMPO TRACK END ==== */
+
   /* ==== CHANNEL TRACK ==== */
 
   /** 1 Track has 0 or 1 Channel. */
@@ -318,7 +333,7 @@ typedef struct Track
    * This is the starting point when processing
    * a Track.
    */
-  TrackProcessor      processor;
+  TrackProcessor *    processor;
 
   AutomationTracklist automation_tracklist;
 
@@ -335,7 +350,7 @@ typedef struct Track
    * the UI should create a separate event using
    * EVENTS_PUSH.
    */
-  int                  trigger_midi_activity;
+  bool                 trigger_midi_activity;
 
   /**
    * The input signal type (eg audio bus tracks have
@@ -358,103 +373,83 @@ typedef struct Track
    *
    * Only relevant for tracks that output audio.
    */
-  int                  bounce;
+  bool                 bounce;
+
+  /**
+   * Tracks that are routed to this track, if
+   * group track.
+   *
+   * This is used when undoing track deletion.
+   */
+  int *                children;
+  int                  num_children;
+  int                  children_size;
 
   int                  magic;
 
+  /** Whether this is a project track (as opposed
+   * to a clone used in actions). */
+  bool                 is_project;
 } Track;
 
 static const cyaml_schema_field_t
 track_fields_schema[] =
 {
-  CYAML_FIELD_STRING_PTR (
-    "name", CYAML_FLAG_POINTER,
-    Track, name,
-     0, CYAML_UNLIMITED),
+  YAML_FIELD_STRING_PTR (Track, name),
   YAML_FIELD_ENUM (
     Track, type, track_type_strings),
-  CYAML_FIELD_INT (
-    "pos", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, pos),
-  CYAML_FIELD_INT (
-    "pos_before_pinned", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, pos_before_pinned),
-  CYAML_FIELD_INT (
-    "lanes_visible", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, lanes_visible),
-  CYAML_FIELD_INT (
-    "automation_visible", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, automation_visible),
-  CYAML_FIELD_INT (
-    "visible", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, visible),
-  CYAML_FIELD_INT (
-    "main_height", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, main_height),
-  CYAML_FIELD_INT (
-    "passthrough_midi_input", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, passthrough_midi_input),
-  CYAML_FIELD_MAPPING_PTR (
-    "mute", CYAML_FLAG_POINTER,
-    Track, mute, port_fields_schema),
-  CYAML_FIELD_INT (
-    "solo", CYAML_FLAG_DEFAULT,
-    Track, solo),
-  CYAML_FIELD_INT (
-    "recording", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     Track, recording),
   CYAML_FIELD_INT (
     "pinned", CYAML_FLAG_DEFAULT,
     Track, pinned),
-  CYAML_FIELD_MAPPING (
-    "color", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Track, color, gdk_rgba_fields_schema),
-  CYAML_FIELD_SEQUENCE_COUNT (
-    "lanes", CYAML_FLAG_POINTER,
-    Track, lanes, num_lanes,
-    &track_lane_schema, 0, CYAML_UNLIMITED),
-  CYAML_FIELD_SEQUENCE_COUNT (
-    "chord_regions",
-    CYAML_FLAG_POINTER | CYAML_FLAG_OPTIONAL,
-    Track, chord_regions, num_chord_regions,
-    &region_schema, 0, CYAML_UNLIMITED),
-  CYAML_FIELD_SEQUENCE_COUNT (
-    "scales",
-    CYAML_FLAG_POINTER | CYAML_FLAG_OPTIONAL,
-    Track, scales, num_scales,
-    &scale_object_schema, 0, CYAML_UNLIMITED),
-  CYAML_FIELD_SEQUENCE_COUNT (
-    "markers",
-    CYAML_FLAG_POINTER | CYAML_FLAG_OPTIONAL,
-    Track, markers, num_markers,
-    &marker_schema, 0, CYAML_UNLIMITED),
-  CYAML_FIELD_MAPPING_PTR (
-    "channel",
-    CYAML_FLAG_DEFAULT | CYAML_FLAG_OPTIONAL,
-    Track, channel,
-    channel_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "processor", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT (
+    Track, lanes, track_lane_schema),
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
+    Track, chord_regions, region_schema),
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
+    Track, scales, scale_object_schema),
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
+    Track, markers, marker_schema),
+  YAML_FIELD_MAPPING_PTR_OPTIONAL (
+    Track, channel, channel_fields_schema),
+  YAML_FIELD_MAPPING_PTR_OPTIONAL (
+    Track, bpm_port, port_fields_schema),
+  YAML_FIELD_MAPPING_PTR_OPTIONAL (
+    Track, time_sig_port, port_fields_schema),
+  YAML_FIELD_MAPPING_PTR (
     Track, processor,
     track_processor_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "automation_tracklist", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     Track, automation_tracklist,
     automation_tracklist_fields_schema),
-  CYAML_FIELD_ENUM (
-    "in_signal_type", CYAML_FLAG_DEFAULT,
-    Track, in_signal_type, port_type_strings,
-    CYAML_ARRAY_LEN (port_type_strings)),
-  CYAML_FIELD_ENUM (
-    "out_signal_type", CYAML_FLAG_DEFAULT,
-    Track, out_signal_type, port_type_strings,
-    CYAML_ARRAY_LEN (port_type_strings)),
+  YAML_FIELD_ENUM (
+    Track, in_signal_type, port_type_strings),
+  YAML_FIELD_ENUM (
+    Track, out_signal_type, port_type_strings),
   CYAML_FIELD_UINT (
     "midi_ch", CYAML_FLAG_DEFAULT,
     Track, midi_ch),
-  CYAML_FIELD_STRING_PTR (
-    "comment", CYAML_FLAG_POINTER, Track, comment,
-     0, CYAML_UNLIMITED),
+  YAML_FIELD_STRING_PTR (
+    Track, comment),
+  YAML_FIELD_DYN_ARRAY_VAR_COUNT_PRIMITIVES (
+    Track, children, int_schema),
 
   CYAML_FIELD_END
 };
@@ -467,7 +462,9 @@ track_schema = {
 };
 
 void
-track_init_loaded (Track * track);
+track_init_loaded (
+  Track * track,
+  bool    project);
 
 /**
  * Inits the Track, optionally adding a single
@@ -501,9 +498,14 @@ track_new (
 
 /**
  * Clones the track and returns the clone.
+ *
+ * @bool src_is_project Whether \ref track is a
+ *   project track.
  */
 Track *
-track_clone (Track * track);
+track_clone (
+  Track * track,
+  bool    src_is_project);
 
 /**
  * Returns if the given TrackType is a type of
@@ -513,9 +515,14 @@ static inline bool
 track_type_has_channel (
   TrackType type)
 {
-  if (type == TRACK_TYPE_CHORD ||
-      type == TRACK_TYPE_MARKER)
-    return 0;
+  switch (type)
+    {
+    case TRACK_TYPE_MARKER:
+    case TRACK_TYPE_TEMPO:
+      return 0;
+    default:
+      break;
+    }
 
   return 1;
 }
@@ -527,9 +534,9 @@ track_type_has_channel (
 void
 track_set_muted (
   Track * track,
-  int     mute,
-  int     trigger_undo,
-  int     fire_events);
+  bool    mute,
+  bool    trigger_undo,
+  bool    fire_events);
 
 TrackType
 track_get_type_from_plugin_descriptor (
@@ -547,14 +554,14 @@ track_get_full_visible_height (
 /**
  * Returns if the track is soloed.
  */
-int
+bool
 track_get_soloed (
   Track * self);
 
 /**
  * Returns if the track is muted.
  */
-int
+bool
 track_get_muted (
   Track * self);
 
@@ -565,17 +572,19 @@ track_get_muted (
 void
 track_set_recording (
   Track *   track,
-  int       recording,
-  int       fire_events);
+  bool      recording,
+  bool      fire_events);
 
 /**
  * Sets track soloed and optionally adds the action
  * to the undo stack.
  */
 void
-track_set_soloed (Track * track,
-                  int     solo,
-                  int     trigger_undo);
+track_set_soloed (
+  Track * track,
+  bool    solo,
+  bool    trigger_undo,
+  bool    fire_events);
 
 /**
  * Returns if Track is in TracklistSelections.
@@ -630,6 +639,13 @@ track_select (
   int     fire_events);
 
 /**
+ * Unselects all arranger objects in the track.
+ */
+void
+track_unselect_all (
+  Track * self);
+
+/**
  * Removes all objects recursively from the track.
  */
 void
@@ -647,6 +663,16 @@ track_remove_region (
   ZRegion * region,
   int      fire_events,
   int      free);
+
+/**
+ * Verifies the identifiers on a live Track
+ * (in the project, not a clone).
+ *
+ * @return True if pass.
+ */
+bool
+track_verify_identifiers (
+  Track * self);
 
 /**
  * Returns the region at the given position, or NULL.
@@ -833,7 +859,7 @@ Track *
 track_get_from_name (
   const char * name);
 
-char *
+const char *
 track_stringize_type (
   TrackType type);
 
@@ -879,12 +905,12 @@ track_get_fader_type (
   const Track * track);
 
 /**
- * Returns the PassthroughProcessorType
+ * Returns the prefader type
  * corresponding to the given Track.
  */
-PassthroughProcessorType
-track_get_passthrough_processor_type (
-  const Track * track);
+FaderType
+track_type_get_prefader_type (
+  TrackType type);
 
 /**
  * Creates missing TrackLane's until pos.
@@ -928,6 +954,59 @@ track_set_comment (
 const char *
 track_get_comment (
   void *  track);
+
+/**
+ * Recursively marks the track and children as
+ * project objects or not.
+ */
+void
+track_set_is_project (
+  Track * self,
+  bool    is_project);
+
+/**
+ * Appends all channel ports and optionally
+ * plugin ports to the array.
+ *
+ * @param size Current array count.
+ * @param is_dynamic Whether the array can be
+ *   dynamically resized.
+ * @param max_size Current array size, if dynamic.
+ */
+void
+track_append_all_ports (
+  Track *   self,
+  Port ***  ports,
+  int *     size,
+  bool      is_dynamic,
+  int *     max_size,
+  bool      include_plugins);
+
+/**
+ * Disconnects the track from the processing
+ * chain.
+ *
+ * This should be called immediately when the
+ * track is getting deleted, and track_free
+ * should be designed to be called later after
+ * an arbitrary delay.
+ *
+ * @param remove_pl Remove the Plugin from the
+ *   Channel. Useful when deleting the channel.
+ * @param recalc_graph Recalculate mixer graph.
+ */
+void
+track_disconnect (
+  Track * self,
+  bool    remove_pl,
+  bool    recalc_graph);
+
+static inline const char *
+track_type_to_string (
+  TrackType type)
+{
+  return track_type_strings[type].str;
+}
 
 /**
  * Wrapper for each track type.

@@ -19,7 +19,8 @@ including English, French, Portuguese, Japanese and
 German.
 
 Zrythm is [free software](https://www.gnu.org/philosophy/free-sw.html)
-written in C using the GTK+3 toolkit.
+written in C using the GTK+3 toolkit and can be
+extended using [GNU Guile](https://www.gnu.org/software/guile/).
 
 [Home page](https://www.zrythm.org)
 
@@ -29,7 +30,7 @@ Zrythm is currently in alpha. Most essential
 DAW features are implemented and we are working
 towards a stable release. [View the Roadmap](https://redmine.zrythm.org/projects/zrythm/roadmap)
 
-![screenshot](https://www.zrythm.org/static/images/apr-12-2020.png)
+![screenshot](https://www.zrythm.org/static/images/jun-26-2020.png)
 
 ### Supported plugins/instruments
 - Full support: LV2, VST2, AU, SFZ, SF2
@@ -87,9 +88,19 @@ individually.
 Some files, where specified, are licensed under
 different licenses.
 
-## Trademarks
-
-Zrythm and the Zrythm logo are trademarks of Alexandros Theodotou.
+### Additional terms under AGPLv3 Section 7
+Zrythm and the Zrythm logo are trademarks of
+Alexandros Theodotou and are governed by the Zrythm
+[Trademark Policy](TRADEMARKS.md).
+You may distribute unaltered copies of Zrythm that
+include the Zrythm trademarks without express
+permission from Alexandros Theodotou. However,
+if you make any changes to Zrythm, you may not
+redistribute that product using any Zrythm trademark
+without Alexandros Theodotou’s prior written consent.
+For example, you may not distribute a modified form
+of Zrythm and continue to call it Zrythm, or
+include the Zrythm logo.
 
 ## Support
 If you would like to support this project please

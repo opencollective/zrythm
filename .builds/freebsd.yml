@@ -35,12 +35,13 @@ packages:
   - fftw3
   - fftw3-float
   - rubberband
+  - zstd
 sources:
   - https://git.sr.ht/~alextee/zrythm
 tasks:
   - setup: |
       cd zrythm
-      CFLAGS=-I/usr/local/include LDFLAGS=-L/usr/local/lib meson build -Denable-tests=true -Dwith-manpage=true
+      CFLAGS=-I/usr/local/include LDFLAGS=-L/usr/local/lib meson build -Dtests=true -Dmanpage=true
   - build: |
       cd zrythm
       ninja -C build

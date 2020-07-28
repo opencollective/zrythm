@@ -24,9 +24,11 @@
 #include "gui/widgets/balance_control.h"
 #include "gui/widgets/bind_cc_dialog.h"
 #include "gui/widgets/bot_bar.h"
+#include "gui/widgets/main_window.h"
 #include "utils/gtk.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -47,6 +49,9 @@ pan_draw_cb (
   cairo_t * cr,
   BalanceControlWidget * self)
 {
+  if (!MAIN_WINDOW)
+    return false;
+
   GtkStyleContext *context =
     gtk_widget_get_style_context (widget);
 
@@ -409,7 +414,21 @@ balance_control_widget_new (
 }
 
 static void
-balance_control_widget_init (BalanceControlWidget * self)
+balance_control_finalize (
+  BalanceControlWidget * self)
+{
+  g_message ("finalizing...");
+
+  G_OBJECT_CLASS (
+    balance_control_widget_parent_class)->
+      finalize (G_OBJECT (self));
+
+  g_message ("done");
+}
+
+static void
+balance_control_widget_init (
+  BalanceControlWidget * self)
 {
   gdk_rgba_parse (
     &self->start_color, "rgba(0%,100%,0%,1.0)");
@@ -462,7 +481,13 @@ balance_control_widget_init (BalanceControlWidget * self)
 static void
 balance_control_widget_class_init (BalanceControlWidgetClass * _klass)
 {
-  GtkWidgetClass * klass = GTK_WIDGET_CLASS (_klass);
+  GtkWidgetClass * klass =
+    GTK_WIDGET_CLASS (_klass);
   gtk_widget_class_set_css_name (
     klass, "balance-control");
+
+  GObjectClass * oklass =
+    G_OBJECT_CLASS (klass);
+  oklass->finalize =
+    (GObjectFinalizeFunc) balance_control_finalize;
 }

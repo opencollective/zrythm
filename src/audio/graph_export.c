@@ -18,10 +18,11 @@
  */
 
 #include "audio/fader.h"
+#include "audio/graph.h"
+#include "audio/graph_node.h"
 #include "audio/graph_export.h"
-#include "audio/passthrough_processor.h"
 #include "audio/port.h"
-#include "audio/routing.h"
+#include "audio/router.h"
 #include "audio/track.h"
 #include "plugins/plugin.h"
 
@@ -53,7 +54,7 @@ get_graph_from_node (
         return anode->graph;
     }
   g_warning (
-    "%p %s", node, graph_get_node_name (node));
+    "%p %s", node, graph_node_get_name (node));
   g_return_val_if_reached (NULL);
 }
 
@@ -101,7 +102,7 @@ get_parent_graph (
               parent_node =
                 graph_find_node_from_prefader (
                   node->graph,
-                  &tr->channel->prefader);
+                  tr->channel->prefader);
             }
             break;
           case PORT_OWNER_TYPE_FADER:
@@ -111,7 +112,7 @@ get_parent_graph (
               parent_node =
                 graph_find_node_from_fader (
                   node->graph,
-                  &tr->channel->fader);
+                  tr->channel->fader);
             }
             break;
           case PORT_OWNER_TYPE_TRACK_PROCESSOR:
@@ -151,7 +152,12 @@ create_anode (
   if (!aparent_graph)
     aparent_graph = aroot_graph;
 
-  char * node_name = graph_get_node_name (node);
+  char * node_name = graph_node_get_name (node);
+  /*node_name =*/
+    /*g_strdup_printf (*/
+      /*"%s i:%d t:%d init refcount: %d", node_name,*/
+      /*node->initial, node->terminal,*/
+      /*node->init_refcount);*/
   Agnode_t * anode =
     agnode (aparent_graph, node_name, true);
   switch (node->type)
@@ -229,7 +235,7 @@ fill_anodes (
           node->type != ROUTE_NODE_TYPE_MONITOR_FADER)
         continue;
 
-      char * node_name = graph_get_node_name (node);
+      char * node_name = graph_node_get_name (node);
       sprintf (
         cluster_name, "cluster_%s", node_name);
       anode->graph =
@@ -273,11 +279,9 @@ fill_anodes (
           break;
         case ROUTE_NODE_TYPE_PREFADER:
           {
-            PassthroughProcessor * prefader =
-              node->prefader;
+            Fader * prefader = node->prefader;
             Track * tr =
-              passthrough_processor_get_track (
-                prefader);
+              fader_get_track (prefader);
             parent_node =
               graph_find_node_from_track (
                 node->graph, tr);
@@ -289,10 +293,11 @@ fill_anodes (
 
       Agraph_t * aparent_graph =
         get_parent_graph (
-          anodes, graph->num_setup_graph_nodes, parent_node);
+          anodes, graph->num_setup_graph_nodes,
+          parent_node);
       g_warn_if_fail (aparent_graph);
       char * node_name =
-        graph_get_node_name (node);
+        graph_node_get_name (node);
       sprintf (
         cluster_name, "cluster_%s", node_name);
       anode->graph =

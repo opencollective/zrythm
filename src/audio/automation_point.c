@@ -22,7 +22,6 @@
 
 #include <math.h>
 
-#include "audio/automatable.h"
 #include "audio/automation_point.h"
 #include "audio/automation_region.h"
 #include "audio/automation_track.h"
@@ -32,14 +31,18 @@
 #include "audio/port.h"
 #include "audio/position.h"
 #include "audio/track.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/automation_arranger.h"
 #include "gui/widgets/automation_point.h"
 #include "gui/widgets/center_dock.h"
 #include "plugins/lv2_plugin.h"
 #include "plugins/plugin.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/flags.h"
 #include "utils/math.h"
+#include "zrythm_app.h"
 
 static AutomationPoint *
 _create_new (
@@ -87,8 +90,8 @@ automation_point_set_region_and_index (
 
   /* set the info to the transient too */
   if (ZRYTHM_HAVE_UI &&
-      arranger_object_should_orig_be_visible (obj) &&
-      obj->transient)
+      obj->transient &&
+      arranger_object_should_orig_be_visible (obj))
     {
       ArrangerObject * trans_obj = obj->transient;
       AutomationPoint * trans_ap =
@@ -109,7 +112,8 @@ automation_point_is_equal (
   ArrangerObject * b_obj =
     (ArrangerObject *) b;
   return
-    position_is_equal (&a_obj->pos, &b_obj->pos) &&
+    position_is_equal_ticks (
+      &a_obj->pos, &b_obj->pos) &&
     math_floats_equal_epsilon (
       a->fvalue, b->fvalue, 0.001f);
 }
@@ -325,7 +329,8 @@ automation_point_get_normalized_value_in_curve (
   AutomationPoint * self,
   double            x)
 {
-  g_return_val_if_fail (x >= 0.0 && x <= 1.0, 0.0);
+  g_return_val_if_fail (
+    self && x >= 0.0 && x <= 1.0, 0.0);
 
   ZRegion * region =
     arranger_object_get_region (
@@ -333,6 +338,7 @@ automation_point_get_normalized_value_in_curve (
   AutomationPoint * next_ap =
     automation_region_get_next_ap (
       region, self, true, true);
+  g_return_val_if_fail (next_ap, self->fvalue);
 
   double dy;
 

@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_RTMIDI
 
@@ -26,15 +26,16 @@
 #include "audio/engine_rtmidi.h"
 #include "audio/ext_port.h"
 #include "audio/midi.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/port.h"
-#include "audio/routing.h"
+#include "audio/router.h"
 #include "audio/rtmidi_device.h"
 #include "audio/transport.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
 #include "plugins/lv2_plugin.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/ui.h"
 
 #include <gtk/gtk.h>
@@ -49,8 +50,7 @@
  */
 int
 engine_rtmidi_setup (
-  AudioEngine * self,
-  int           loading)
+  AudioEngine * self)
 {
   self->midi_buf_size = 4096;
 
@@ -103,7 +103,8 @@ engine_rtmidi_tear_down (
 
 int
 engine_rtmidi_activate (
-  AudioEngine * self)
+  AudioEngine * self,
+  bool          activate)
 {
   return 0;
 }

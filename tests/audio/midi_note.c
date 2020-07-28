@@ -17,6 +17,8 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-test-config.h"
+
 #include "audio/midi_note.h"
 #include "audio/region.h"
 #include "project.h"
@@ -34,7 +36,6 @@ static void
 fixture_set_up (
   MidiNoteFixture * fixture)
 {
-  transport_init (TRANSPORT, 0);
   engine_update_frames_per_tick (
     AUDIO_ENGINE, 4, 140, 44000);
 

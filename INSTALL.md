@@ -15,6 +15,18 @@ inside `meson_options.txt`.
 
     meson configure build
 
+## Optimization
+
+The default build type is `debugoptmized`, which
+is equivalent to `-Ddebug=true -Doptimization=2`
+(`-O2 -g`). This works well in most cases. For
+extremely optimized builds, we suggest building with
+
+    meson build -Ddebug=true -Doptimization=3 -Dextra_optimizations=true
+
+We suggest always keeping `-Ddebug=true` to assist
+with meaningful stack traces and bug reports.
+
 ## Dependencies
 ### Required
 - audec (AGPLv3+): <https://git.zrythm.org/cgit/libaudec/>
@@ -25,6 +37,7 @@ inside `meson_options.txt`.
 - guile (GPLv3+): <https://www.gnu.org/software/guile/>
 - libcyaml (ISC): <https://github.com/tlsa/libcyaml/>
 - lilv (ISC): <https://drobilla.net/software/lilv>
+- zstd (3-Clause BSD): <https://github.com/facebook/zstd>
 
 ### Optional
 - carla (GPLv2+): <https://kx.studio/Applications:Carla>
@@ -39,17 +52,18 @@ inside `meson_options.txt`.
 ## Installation
 Once the program is built, it will need to be
 installed the first time before it can run (to
-install the [GSettings](https://developer.gnome.org/gio/stable/GSettings.html))
+install the [GSettings](https://developer.gnome.org/gio/stable/GSettings.html)) among other things.
 
     ninja -C build install
 
-Alternatively if you don't want to install anything
-on your system you can run
-`glib-compile-schemas data/` and then run zrythm
-using
-`GSETTINGS_SCHEMA_DIR=data ./build/src/zrythm`.
+If you don't want to install anything permanent on
+your system, you can install it somewhere
+temporary by configuring with
+`meson --prefix=/tmp/zrythm` for example, and then
+you can run it with
+`GSETTINGS_SCHEMA_DIR=/tmp/zrythm/share/glib-2.0/schemas ./build/src/zrythm`.
 The built program will be at `build/src/zrythm` by
-default
+default.
 
 ## Running
 

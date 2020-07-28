@@ -20,7 +20,6 @@
 #ifndef __AUDIO_AUTOMATION_TRACK_H__
 #define __AUDIO_AUTOMATION_TRACK_H__
 
-#include "audio/automatable.h"
 #include "audio/automation_point.h"
 #include "audio/port.h"
 #include "audio/position.h"
@@ -85,10 +84,10 @@ typedef struct AutomationTrack
 
   /** Whether it has been created by the user
    * yet or not. */
-  int               created;
+  bool              created;
 
   /** The automation Region's. */
-  ZRegion **         regions;
+  ZRegion **        regions;
   int               num_regions;
   size_t            regions_size;
 
@@ -151,7 +150,7 @@ static const cyaml_schema_field_t
   YAML_FIELD_MAPPING_EMBEDDED (
     AutomationTrack, port_id,
     port_identifier_fields_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     AutomationTrack, regions, region_schema),
   YAML_FIELD_INT (
     AutomationTrack, created),
@@ -207,10 +206,27 @@ automation_record_mode_get_localized (
  * @note This is expensive and should only be used
  *   if \ref PortIdentifier.at_idx is not set. Use
  *   port_get_automation_track() instead.
+ *
+ * @param basic_search If true, only basic port
+ *   identifier members are checked.
  */
 AutomationTrack *
 automation_track_find_from_port_id (
-  PortIdentifier * id);
+  PortIdentifier * id,
+  bool             basic_search);
+
+/**
+ * Finds the AutomationTrack associated with
+ * `port`.
+ *
+ * @param track The track that owns the port, if
+ *   known.
+ */
+AutomationTrack *
+automation_track_find_from_port (
+  Port *  port,
+  Track * track,
+  bool    basic_search);
 
 static inline void
 automation_track_swap_record_mode (
@@ -268,6 +284,9 @@ automation_track_should_be_recording (
 
 /**
  * Adds an automation ZRegion to the AutomationTrack.
+ *
+ * @note This must not be used directly. Use
+ *   track_add_region() instead.
  */
 void
 automation_track_add_region (
@@ -298,19 +317,6 @@ void
 automation_track_set_index (
   AutomationTrack * self,
   int               index);
-
-#if 0
-/**
- * Sets the automatable to the automation track and
- * updates the GUI
- *
- * FIXME no definition implemented.
- */
-void
-automation_track_set_automatable (
-  AutomationTrack * automation_track,
-  Automatable *     a);
-#endif
 
 /**
  * Clones the AutomationTrack.
@@ -347,6 +353,13 @@ automation_track_get_region_before_pos (
   const Position *        pos);
 
 /**
+ * Unselects all arranger objects.
+ */
+void
+automation_track_unselect_all (
+  AutomationTrack * self);
+
+/**
  * Removes all objects recursively.
  */
 void
@@ -360,11 +373,15 @@ automation_track_clear (
  * If there is no automation point/curve during
  * the position, it returns the current value
  * of the parameter it is automating.
+ *
+ * @param normalized Whether to return the value
+ *   normalized.
  */
 float
-automation_track_get_normalized_val_at_pos (
+automation_track_get_val_at_pos (
   AutomationTrack * at,
-  Position *        pos);
+  Position *        pos,
+  bool              normalized);
 
 /**
  * Returns the y pixels from the value based on the

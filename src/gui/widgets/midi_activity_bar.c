@@ -24,6 +24,7 @@
 #include "gui/widgets/track.h"
 #include "gui/widgets/track_top_grid.h"
 #include "project.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -40,13 +41,18 @@ static int other_color_set = 0;
 /**
  * Draws the color picker.
  */
-static int
+static bool
 midi_activity_bar_draw_cb (
   GtkWidget *       widget,
   cairo_t *         cr,
   MidiActivityBarWidget * self)
 {
   GdkRGBA color;
+
+  if (!PROJECT || !AUDIO_ENGINE)
+    {
+      return false;
+    }
 
   GtkStyleContext * context =
     gtk_widget_get_style_context (widget);

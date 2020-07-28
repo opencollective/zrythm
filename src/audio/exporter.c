@@ -17,9 +17,9 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <stdio.h>
+#include "zrythm-config.h"
 
-#include "config.h"
+#include <stdio.h>
 
 #include "audio/channel.h"
 #include "audio/engine.h"
@@ -29,17 +29,19 @@
 #include "audio/exporter.h"
 #include "audio/marker_track.h"
 #include "audio/master_track.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/position.h"
-#include "audio/routing.h"
+#include "audio/tempo_track.h"
 #include "audio/transport.h"
 #include "gui/widgets/main_window.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/flags.h"
 #include "utils/io.h"
 #include "utils/math.h"
 #include "utils/objects.h"
 #include "utils/ui.h"
+#include "zrythm_app.h"
 
 #include "midilib/src/midifile.h"
 
@@ -235,7 +237,7 @@ export_audio (
   sf_set_string (
     sndfile, SF_STR_TITLE, PROJECT->title);
   sf_set_string (
-    sndfile, SF_STR_SOFTWARE, "Zrythm");
+    sndfile, SF_STR_SOFTWARE, PROGRAM_NAME);
   sf_set_string (
     sndfile, SF_STR_ARTIST, info->artist);
   sf_set_string (
@@ -343,7 +345,7 @@ export_audio (
       engine_process_prepare (
         AUDIO_ENGINE, nframes);
       router_start_cycle (
-        &MIXER->router, nframes, 0, PLAYHEAD);
+        ROUTER, nframes, 0, PLAYHEAD);
       engine_post_process (
         AUDIO_ENGINE, nframes);
 
@@ -448,7 +450,9 @@ export_midi (
     {
       /* Write tempo information out to track 1 */
       midiSongAddTempo (
-        mf, 1, (int) TRANSPORT->bpm);
+        mf, 1,
+        (int)
+        tempo_track_get_current_bpm (P_TEMPO_TRACK));
 
       midiFileSetPPQN (mf, TICKS_PER_QUARTER_NOTE);
 
@@ -584,30 +588,8 @@ void *
 exporter_generic_export_thread (
   ExportSettings * info)
 {
-  /* stop engine and give it some time to stop
-   * running */
-  g_atomic_int_set (&AUDIO_ENGINE->run, 0);
-  g_usleep (1000);
-  AUDIO_ENGINE->exporting = 1;
-  info->prev_loop = TRANSPORT->loop;
-  TRANSPORT->loop = 0;
-
-  /* deactivate and activate all plugins to make
-   * them reset their states */
-  /* TODO this doesn't reset the plugin state as
-   * expected, so sending note off is needed */
-  tracklist_activate_all_plugins (
-    TRACKLIST, false);
-  tracklist_activate_all_plugins (
-    TRACKLIST, true);
-
   /* export */
   exporter_export (info);
-
-  /* restart engine */
-  AUDIO_ENGINE->exporting = 0;
-  TRANSPORT->loop = info->prev_loop;
-  g_atomic_int_set (&AUDIO_ENGINE->run, 1);
 
   return NULL;
 }
@@ -616,9 +598,9 @@ void
 export_settings_free_members (
   ExportSettings * self)
 {
-  g_free_if_exists (self->artist);
-  g_free_if_exists (self->genre);
-  g_free_if_exists (self->file_uri);
+  g_free_and_null (self->artist);
+  g_free_and_null (self->genre);
+  g_free_and_null (self->file_uri);
 }
 
 void
@@ -664,7 +646,7 @@ exporter_create_audio_track_after_bounce (
   UndoableAction * ua =
     create_tracks_action_new (
       TRACK_TYPE_AUDIO, NULL,
-      descr, track->pos + 1, 1);
+      descr, track->pos + 1, PLAYHEAD, 1);
   Position tmp;
   position_set_to_pos (&tmp, PLAYHEAD);
   transport_set_playhead_pos (
@@ -681,6 +663,24 @@ exporter_create_audio_track_after_bounce (
 int
 exporter_export (ExportSettings * info)
 {
+  /* stop engine and give it some time to stop
+   * running */
+  g_atomic_int_set (&AUDIO_ENGINE->run, 0);
+  zix_sem_wait (&AUDIO_ENGINE->port_operation_lock);
+  zix_sem_post (&AUDIO_ENGINE->port_operation_lock);
+  AUDIO_ENGINE->exporting = 1;
+  info->prev_loop = TRANSPORT->loop;
+  TRANSPORT->loop = 0;
+
+  /* deactivate and activate all plugins to make
+   * them reset their states */
+  /* TODO this doesn't reset the plugin state as
+   * expected, so sending note off is needed */
+  tracklist_activate_all_plugins (
+    TRACKLIST, false);
+  tracklist_activate_all_plugins (
+    TRACKLIST, true);
+
   if (info->format == AUDIO_FORMAT_MIDI)
     {
       return export_midi (info);
@@ -689,5 +689,10 @@ exporter_export (ExportSettings * info)
     {
       return export_audio (info);
     }
+
+  /* restart engine */
+  AUDIO_ENGINE->exporting = 0;
+  TRANSPORT->loop = info->prev_loop;
+  g_atomic_int_set (&AUDIO_ENGINE->run, 1);
 }
 

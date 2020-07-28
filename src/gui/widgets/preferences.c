@@ -17,9 +17,12 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-config.h"
+
 #include <locale.h>
 
 #include "audio/engine.h"
+#include "gui/widgets/main_window.h"
 #include "gui/widgets/midi_controller_mb.h"
 #include "gui/widgets/preferences.h"
 #include "plugins/plugin_gtk.h"
@@ -31,6 +34,7 @@
 #include "utils/resources.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -461,6 +465,9 @@ make_control (
             "UI", "General", "language",
             language_strings_full);
           SET_STRV_IF_MATCH (
+            "UI", "General", "graphic-detail",
+            ui_detail_str);
+          SET_STRV_IF_MATCH (
             "DSP", "Pan", "pan-algorithm",
             pan_algorithm_str);
           SET_STRV_IF_MATCH (
@@ -750,6 +757,30 @@ add_group (
     }
 }
 
+static void
+on_window_closed (
+  GtkWidget *object,
+  PreferencesWidget * self)
+{
+  GtkWidget * dialog =
+    gtk_message_dialog_new_with_markup (
+      GTK_WINDOW (MAIN_WINDOW),
+      GTK_DIALOG_MODAL |
+        GTK_DIALOG_DESTROY_WITH_PARENT,
+      GTK_MESSAGE_INFO,
+      GTK_BUTTONS_OK,
+      _("Some changes will only take "
+      "effect after you restart %s"),
+      PROGRAM_NAME);
+  gtk_window_set_transient_for (
+    GTK_WINDOW (dialog),
+    GTK_WINDOW (self));
+  gtk_dialog_run (GTK_DIALOG (dialog));
+  gtk_widget_destroy (GTK_WIDGET (dialog));
+
+  MAIN_WINDOW->preferences_opened = false;
+}
+
 /**
  * Sets up the preferences widget.
  */
@@ -766,6 +797,10 @@ preferences_widget_new ()
     {
       add_group (self, i);
     }
+
+  g_signal_connect (
+    G_OBJECT (self), "destroy",
+    G_CALLBACK (on_window_closed), self);
 
   return self;
 }

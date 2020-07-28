@@ -17,7 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "gui/backend/events.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/mixer_selections.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/left_dock_edge.h"
@@ -32,8 +33,17 @@
 
 void
 mixer_selections_init_loaded (
-  MixerSelections * self)
+  MixerSelections * self,
+  bool              is_project)
 {
+  if (!is_project)
+    {
+      for (int i = 0; i < self->num_slots; i++)
+        {
+          plugin_init_loaded (
+            self->plugins[i], false);
+        }
+    }
 }
 
 /**
@@ -308,13 +318,17 @@ mixer_selections_clear (
 
 /**
  * Clone the struct for copying, undoing, etc.
+ *
+ * @bool src_is_project Whether \ref src are the
+ *   project selections.
  */
 MixerSelections *
 mixer_selections_clone (
-  MixerSelections * src)
+  MixerSelections * src,
+  bool              src_is_project)
 {
   MixerSelections * ms =
-    calloc (1, sizeof (MixerSelections));
+    object_new (MixerSelections);
 
   int i;
 
@@ -337,7 +351,8 @@ mixer_selections_clone (
           break;
         }
       g_return_val_if_fail (pl, NULL);
-      ms->plugins[i] = plugin_clone (pl);
+      ms->plugins[i] =
+        plugin_clone (pl, src_is_project);
       ms->slots[i] = src->slots[i];
     }
 

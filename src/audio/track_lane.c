@@ -19,9 +19,11 @@
 
 #include <stdlib.h>
 
+#include "audio/audio_region.h"
 #include "audio/track.h"
 #include "audio/track_lane.h"
 #include "audio/tracklist.h"
+#include "gui/widgets/arranger.h"
 #include "utils/arrays.h"
 #include "midilib/src/midifile.h"
 #include "midilib/src/midiinfo.h"
@@ -43,6 +45,7 @@ track_lane_init_loaded (
   for (i = 0; i < lane->num_regions; i++)
     {
       region = lane->regions[i];
+      region->magic = REGION_MAGIC;
       ArrangerObject * r_obj =
         (ArrangerObject *) region;
       region_set_lane (region, lane);
@@ -87,12 +90,10 @@ void
 track_lane_update_frames (
   TrackLane * self)
 {
-  ZRegion * r;
   for (int i = 0; i < self->num_regions; i++)
     {
-      r = self->regions[i];
       ArrangerObject * r_obj =
-        (ArrangerObject *) r;
+        (ArrangerObject *) self->regions[i];
       arranger_object_update_frames (r_obj);
     }
 }
@@ -120,6 +121,14 @@ track_lane_add_region (
   region->id.lane_pos = self->pos;
   region->id.idx = self->num_regions - 1;
   region_update_identifier (region);
+
+  if (region->id.type == REGION_TYPE_AUDIO)
+    {
+      AudioClip * clip =
+        audio_region_get_clip (region);
+      g_return_if_fail (clip);
+      audio_region_init_frame_caches (region, clip);
+    }
 }
 
 /**
@@ -134,6 +143,10 @@ track_lane_set_track_pos (
   TrackLane * self,
   const int   pos)
 {
+  g_message (
+    "lane: %d, track pos: %d, num regions: %d",
+    self->pos, pos, self->num_regions);
+
   self->track_pos = pos;
 
   for (int i = 0; i < self->num_regions; i++)
@@ -199,6 +212,25 @@ track_lane_clone (
 }
 
 /**
+ * Unselects all arranger objects.
+ *
+ * TODO replace with "select_all" and boolean param.
+ */
+void
+track_lane_unselect_all (
+  TrackLane * self)
+{
+  Track * track = track_lane_get_track (self);
+  g_return_if_fail (track);
+  for (int i = 0; i < self->num_regions; i++)
+    {
+      ZRegion * region = self->regions[i];
+      arranger_object_select (
+        (ArrangerObject *) region, false, false);
+    }
+}
+
+/**
  * Removes all objects recursively from the track
  * lane.
  */
@@ -213,6 +245,40 @@ track_lane_clear (
       ZRegion * region = self->regions[i];
       track_remove_region (
         track, region, 0, 1);
+    }
+}
+
+/**
+ * Removes but does not free the region.
+ */
+void
+track_lane_remove_region (
+  TrackLane * self,
+  ZRegion *   region)
+{
+  g_return_if_fail (IS_REGION (region));
+
+  array_delete (
+    self->regions, self->num_regions, region);
+
+  if (ZRYTHM_HAVE_UI)
+    {
+      ArrangerObject * obj =
+        (ArrangerObject *) region;
+      ArrangerWidget * arranger =
+        arranger_object_get_arranger (obj);
+      if (arranger->hovered_object == obj)
+        {
+          arranger->hovered_object = NULL;
+        }
+    }
+
+  for (int i = region->id.idx; i < self->num_regions;
+       i++)
+    {
+      ZRegion * r = self->regions[i];
+      r->id.idx = i;
+      region_update_identifier (r);
     }
 }
 
@@ -261,7 +327,7 @@ track_lane_write_to_midi_file (
     {
       region = self->regions[i];
       midi_region_write_to_midi_file (
-        region, mf, 1, 1);
+        region, mf, 1, true, true);
     }
 }
 

@@ -35,7 +35,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef _WOE32
 
@@ -44,7 +44,7 @@
 
 #include <stdint.h>
 
-#include <Windows.h>
+#include <windows.h>
 
 #include "zix/ring.h"
 

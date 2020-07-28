@@ -20,6 +20,8 @@
 #ifndef __UTILS_LOG_H__
 #define __UTILS_LOG_H__
 
+#include <stdbool.h>
+
 #include <gtk/gtk.h>
 
 typedef struct _LogViewerWidget LogViewerWidget;
@@ -32,16 +34,24 @@ typedef struct ObjectPool ObjectPool;
  * @{
  */
 
-#define LOG (&ZRYTHM->log)
+#define LOG (ZRYTHM->log)
 
 typedef struct Log
 {
   FILE * logfile;
 
+  /** File descriptor if not using FILE. */
+  int    logfd;
+
+#if 0
   /* Buffers to fill in */
   GtkTextBuffer * messages_buf;
   GtkTextBuffer * warnings_buf;
   GtkTextBuffer * critical_buf;
+#endif
+
+  /** Current log file path. */
+  char *          log_filepath;
 
   /** Message queue, for when messages are sent
    * from a non-gtk thread. */
@@ -50,18 +60,26 @@ typedef struct Log
   /** Object pool for the queue. */
   ObjectPool *    obj_pool;
 
+  bool            initialized;
+
   /** Currently opened log viewer. */
   LogViewerWidget * viewer;
+
+  /** ID of the source function. */
+  guint           writer_source_id;
 } Log;
 
 /**
  * Initializes logging to a file.
  *
  * This must be called from the GTK thread.
+ *
+ * @param secs Number of timeout seconds.
  */
 void
 log_init_writer_idle (
-  Log * self);
+  Log *        self,
+  unsigned int secs);
 
 /**
  * Idle callback.
@@ -74,6 +92,9 @@ log_idle_cb (
  * Returns the last \ref n lines as a newly
  * allocated string.
  *
+ * @note This must only be called from the GTK
+ *   thread.
+ *
  * @param n Number of lines.
  */
 char *
@@ -85,9 +106,29 @@ log_get_last_n_lines (
  * Initializes logging to a file.
  *
  * This can be called from any thread.
+ *
+ * @param use_file Whether to use the given
+ *   file or not.
  */
 void
-log_init (
+log_init_with_file (
+  Log * self,
+  bool  use_file,
+  int   file);
+
+/**
+ * Creates the logger and sets the writer func.
+ *
+ * This can be called from any thread.
+ */
+Log *
+log_new (void);
+
+/**
+ * Stops logging and frees any allocated memory.
+ */
+void
+log_free (
   Log * self);
 
 /**

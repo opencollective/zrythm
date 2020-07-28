@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include "actions/create_tracks_action.h"
 #include "audio/supported_file.h"
@@ -37,6 +37,7 @@
 #include "utils/io.h"
 #include "utils/resources.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <audec/audec.h>
 
@@ -98,7 +99,7 @@ on_file_chooser_file_activated (
       ua =
         create_tracks_action_new (
           TRACK_TYPE_AUDIO, NULL, file,
-          TRACKLIST->num_tracks, 1);
+          TRACKLIST->num_tracks, PLAYHEAD, 1);
       undo_manager_perform (UNDO_MANAGER, ua);
       break;
     case FILE_TYPE_MIDI:
@@ -106,6 +107,7 @@ on_file_chooser_file_activated (
         create_tracks_action_new (
           TRACK_TYPE_MIDI, NULL, file,
           TRACKLIST->num_tracks,
+          PLAYHEAD,
           /* the number of tracks
            * to create depends on the MIDI file */
           -1);

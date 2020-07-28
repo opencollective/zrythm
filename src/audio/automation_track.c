@@ -19,13 +19,13 @@
 
 #include <math.h>
 
-#include "audio/automatable.h"
 #include "audio/automation_track.h"
 #include "audio/automation_point.h"
 #include "audio/automation_region.h"
+#include "audio/control_port.h"
 #include "audio/instrument_track.h"
 #include "audio/track.h"
-#include "gui/backend/events.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/arranger.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/custom_button.h"
@@ -36,6 +36,7 @@
 #include "utils/arrays.h"
 #include "utils/flags.h"
 #include "utils/objects.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -73,6 +74,8 @@ automation_track_new (
 
   port_identifier_copy (
     &self->port_id, &port->id);
+
+  port->at = self;
 
   return self;
 }
@@ -124,6 +127,9 @@ automation_record_mode_get_localized (
 
 /**
  * Adds an automation ZRegion to the AutomationTrack.
+ *
+ * @note This must not be used directly. Use
+ *   track_add_region() instead.
  */
 void
 automation_track_add_region (
@@ -217,31 +223,78 @@ automation_track_get_ap_before_pos (
 }
 
 /**
- * @note This is expensive and should only be used
- *   if \ref PortIdentifier.at_idx is not set. Use
- *   port_get_automation_track() instead.
+ * Finds the AutomationTrack associated with
+ * `port`.
+ *
+ * @param track The track that owns the port, if
+ *   known.
  */
 AutomationTrack *
-automation_track_find_from_port_id (
-  PortIdentifier * id)
+automation_track_find_from_port (
+  Port *  port,
+  Track * track,
+  bool    basic_search)
 {
-  Port * port = port_find_from_identifier (id);
-  g_return_val_if_fail (port, NULL);
-
-  Track * track = port_get_track (port, 1);
+  if (!track)
+    {
+      track = port_get_track (port, 1);
+    }
   g_return_val_if_fail (track, NULL);
 
   AutomationTracklist * atl =
     track_get_automation_tracklist (track);
+  g_return_val_if_fail (atl, NULL);
   for (int i = 0; i < atl->num_ats; i++)
     {
       AutomationTrack * at = atl->ats[i];
-      if (port_identifier_is_equal (
-            id, &at->port_id))
-        return at;
+      if (basic_search)
+        {
+          PortIdentifier * src = &port->id;
+          PortIdentifier * dest = &at->port_id;
+          if (
+            string_is_equal (
+              dest->label, src->label, 0) &&
+            dest->owner_type == src->owner_type &&
+            dest->type == src->type &&
+            dest->flow == src->flow &&
+            dest->flags == src->flags &&
+            dest->track_pos == src->track_pos)
+            {
+              return at;
+            }
+        }
+      else if (port_identifier_is_equal (
+            &port->id, &at->port_id))
+        {
+          return at;
+        }
     }
 
   return NULL;
+}
+
+/**
+ * @note This is expensive and should only be used
+ *   if \ref PortIdentifier.at_idx is not set. Use
+ *   port_get_automation_track() instead.
+ *
+ * @param basic_search If true, only basic port
+ *   identifier members are checked.
+ */
+AutomationTrack *
+automation_track_find_from_port_id (
+  PortIdentifier * id,
+  bool             basic_search)
+{
+  Port * port = port_find_from_identifier (id);
+  g_return_val_if_fail (
+    port &&
+      port_identifier_is_equal (id, &port->id),
+    NULL);
+
+  return
+    automation_track_find_from_port (
+      port, NULL, basic_search);
 }
 
 /**
@@ -332,6 +385,21 @@ automation_track_should_be_recording (
 }
 
 /**
+ * Unselects all arranger objects.
+ */
+void
+automation_track_unselect_all (
+  AutomationTrack * self)
+{
+  for (int i = 0; i < self->num_regions; i++)
+    {
+      ZRegion * region = self->regions[i];
+      arranger_object_select (
+        (ArrangerObject *) region, false, false);
+    }
+}
+
+/**
  * Removes all arranger objects recursively.
  */
 void
@@ -395,16 +463,21 @@ automation_track_set_index (
 }
 
 /**
- * Returns the normalized value (0.0-1.0) at the
- * given position (global).
+ * Returns the actual parameter value at the given
+ * position.
  *
  * If there is no automation point/curve during
- * the position, it returns negative.
+ * the position, it returns the current value
+ * of the parameter it is automating.
+ *
+ * @param normalized Whether to return the value
+ *   normalized.
  */
 float
-automation_track_get_normalized_val_at_pos (
+automation_track_get_val_at_pos (
   AutomationTrack * self,
-  Position *        pos)
+  Position *        pos,
+  bool              normalized)
 {
   g_return_val_if_fail (self, 0.f);
   AutomationPoint * ap =
@@ -413,29 +486,42 @@ automation_track_get_normalized_val_at_pos (
   ArrangerObject * ap_obj =
     (ArrangerObject *) ap;
 
+  Port * port =
+    automation_track_get_port (self);
+  g_return_val_if_fail (port, 0.f);
+
   /* no automation points yet, return negative
    * (no change) */
   if (!ap)
-    return -1.f;
+    {
+      return
+        port_get_control_value (port, normalized);
+    }
 
   ZRegion * region =
     arranger_object_get_region (ap_obj);
   long localp =
     region_timeline_frames_to_local (
-      region, pos->frames, 1);
+      region, pos->frames, true);
 
   AutomationPoint * next_ap =
     automation_region_get_next_ap (
       region, ap, false, false);
   ArrangerObject * next_ap_obj =
     (ArrangerObject *) next_ap;
-  /*g_message ("prev fvalue %f next %f",*/
-             /*prev_ap->fvalue,*/
-             /*next_ap->fvalue);*/
 
   /* return value at last ap */
   if (!next_ap)
-    return ap->normalized_val;
+    {
+      if (normalized)
+        {
+          return ap->normalized_val;
+        }
+      else
+        {
+          return ap->fvalue;
+        }
+    }
 
   int prev_ap_lower =
     ap->normalized_val <= next_ap->normalized_val;
@@ -452,16 +538,13 @@ automation_track_get_normalized_val_at_pos (
   double ratio =
     (double) (localp - ap_frames) /
     (double) (next_ap_frames - ap_frames);
-  /*g_message ("ratio %f",*/
-             /*ratio);*/
+  g_return_val_if_fail (ratio >= 0, 0.f);
 
   float result =
     (float)
     automation_point_get_normalized_value_in_curve (
       ap, ratio);
   result = result * cur_next_diff;
-  /*g_message ("halfbaked result %f start at lower %d",*/
-             /*result, prev_ap_lower);*/
   if (prev_ap_lower)
     result +=
       ap->normalized_val;
@@ -469,9 +552,16 @@ automation_track_get_normalized_val_at_pos (
     result +=
       next_ap->normalized_val;
 
-  /*g_message ("result of %s: %f",*/
-             /*self->automatable->label, result);*/
-  return result;
+  if (normalized)
+    {
+      return result;
+    }
+  else
+    {
+      return
+        control_port_normalized_val_to_real (
+          port, result);
+    }
 }
 
 /**
@@ -545,6 +635,14 @@ automation_track_clone (
   dest->regions =
     malloc (
       dest->regions_size * sizeof (ZRegion *));
+  dest->visible = src->visible;
+  dest->created = src->created;
+  dest->index = src->index;
+  dest->y = src->y;
+  dest->automation_mode = src->automation_mode;
+  dest->record_mode = src->record_mode;
+  dest->height = src->height;
+  g_warn_if_fail (dest->height >= TRACK_MIN_HEIGHT);
 
   port_identifier_copy (
     &dest->port_id, &src->port_id);

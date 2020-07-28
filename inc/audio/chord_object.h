@@ -40,6 +40,12 @@
  * @{
  */
 
+#define CHORD_OBJECT_MAGIC 4181694
+#define IS_CHORD_OBJECT(tr) \
+  ((ChordObject *) tr && \
+   ((ChordObject *) tr)->magic == \
+     CHORD_OBJECT_MAGIC)
+
 #define CHORD_OBJECT_WIDGET_TRIANGLE_W 10
 
 #define chord_object_is_selected(r) \
@@ -57,12 +63,17 @@ typedef struct ChordObject
   /** Base struct. */
   ArrangerObject  base;
 
+  /** The index inside the region. */
+  int             index;
+
   /** The index of the chord it belongs to
    * (0 topmost). */
-  int                 index;
+  int             chord_index;
+
+  int             magic;
 
   /** Cache layout for drawing the name. */
-  PangoLayout *      layout;
+  PangoLayout *   layout;
 } ChordObject;
 
 static const cyaml_schema_field_t
@@ -72,9 +83,10 @@ static const cyaml_schema_field_t
     "base", CYAML_FLAG_DEFAULT,
     ChordObject, base,
     arranger_object_fields_schema),
-  CYAML_FIELD_INT (
-    "index", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     ChordObject, index),
+  YAML_FIELD_INT (
+    ChordObject, chord_index),
 
   CYAML_FIELD_END
 };
@@ -92,8 +104,8 @@ chord_object_schema = {
 ChordObject *
 chord_object_new (
   RegionIdentifier * region_id,
-  int index,
-  int is_main);
+  int                chord_index,
+  int                index);
 
 int
 chord_object_is_equal (

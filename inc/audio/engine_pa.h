@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_PORT_AUDIO
 
@@ -39,8 +39,7 @@ typedef struct AudioEngine AudioEngine;
  */
 int
 engine_pa_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 void
 engine_pa_fill_out_bufs (

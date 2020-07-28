@@ -19,13 +19,28 @@
 
 #include "actions/delete_plugins_action.h"
 #include "audio/channel.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
 #include "project.h"
 #include "utils/flags.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
+
+void
+delete_plugins_action_init_loaded (
+  DeletePluginsAction * self)
+{
+  mixer_selections_init_loaded (self->ms, false);
+
+  for (int i = 0; i < self->num_ats; i++)
+    {
+      automation_track_init_loaded (self->ats[i]);
+    }
+}
 
 UndoableAction *
 delete_plugins_action_new (
@@ -38,7 +53,9 @@ delete_plugins_action_new (
   ua->type =
     UA_DELETE_PLUGINS;
 
-  self->ms = mixer_selections_clone (ms);
+  self->ms =
+    mixer_selections_clone (
+      ms, ms == MIXER_SELECTIONS);
 
   /* clone the automation tracks */
   Track * track =
@@ -83,7 +100,7 @@ delete_plugins_action_do (
         F_NO_RECALC_GRAPH);
     }
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   return 0;
 }
@@ -131,7 +148,8 @@ delete_plugins_action_undo (
       int slot = self->ms->slots[i];
 
       /* clone the clone */
-      pl = plugin_clone (self->ms->plugins[i]);
+      pl =
+        plugin_clone (self->ms->plugins[i], false);
 
       g_return_val_if_fail (
         self->ms->plugins[i]->id.slot == slot, -1);
@@ -171,6 +189,10 @@ delete_plugins_action_undo (
             }
         }
 
+      /* instantiate and activate it */
+      plugin_instantiate (pl, true, NULL);
+      plugin_activate (pl, F_ACTIVATE);
+
       /* select the plugin */
       mixer_selections_add_slot (
         MIXER_SELECTIONS, ch, self->ms->type,
@@ -188,7 +210,7 @@ delete_plugins_action_undo (
         }
     }
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   EVENTS_PUSH (ET_PLUGINS_ADDED, ch);
   EVENTS_PUSH (ET_CHANNEL_SLOTS_CHANGED, ch);

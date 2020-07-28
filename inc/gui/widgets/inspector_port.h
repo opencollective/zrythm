@@ -78,6 +78,9 @@ typedef struct _InspectorPortWidget
   /** Port this is for. */
   Port *            port;
 
+  /** Meter for this widget. */
+  Meter *           meter;
+
   /** Jack button to expose port to jack. */
   GtkToggleButton * jack;
 
@@ -89,6 +92,8 @@ typedef struct _InspectorPortWidget
 
   /** Multipress guesture for right click. */
   GtkGestureMultiPress * right_click_gesture;
+
+  char                   hex_color[40];
 } InspectorPortWidget;
 
 void

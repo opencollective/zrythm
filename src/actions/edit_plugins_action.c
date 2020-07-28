@@ -19,26 +19,35 @@
 
 #include "actions/edit_plugins_action.h"
 #include "audio/channel.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
 #include "project.h"
 
 #include <glib/gi18n.h>
 
+void
+edit_plugins_action_init_loaded (
+  EditPluginsAction * self)
+{
+  mixer_selections_init_loaded (self->ms, false);
+}
+
 UndoableAction *
 edit_plugins_action_new (
   MixerSelections *     ms,
   EditPluginsActionType type)
 {
-	EditPluginsAction * self =
+  EditPluginsAction * self =
     calloc (1, sizeof (
-    	EditPluginsAction));
+      EditPluginsAction));
   UndoableAction * ua = (UndoableAction *) self;
   ua->type =
-	  UA_EDIT_PLUGINS;
+    UA_EDIT_PLUGINS;
 
-  self->ms = mixer_selections_clone (ms);
+  self->ms =
+    mixer_selections_clone (
+      ms, ms == MIXER_SELECTIONS);
   self->type = type;
 
   return ua;
@@ -46,7 +55,7 @@ edit_plugins_action_new (
 
 int
 edit_plugins_action_do (
-	EditPluginsAction * self)
+  EditPluginsAction * self)
 {
   /* TODO */
   return 0;
@@ -57,7 +66,7 @@ edit_plugins_action_do (
  */
 int
 edit_plugins_action_undo (
-	EditPluginsAction * self)
+  EditPluginsAction * self)
 {
   /* TODO */
   return 0;
@@ -65,7 +74,7 @@ edit_plugins_action_undo (
 
 char *
 edit_plugins_action_stringize (
-	EditPluginsAction * self)
+  EditPluginsAction * self)
 {
   g_return_val_if_reached (
     g_strdup (""));
@@ -73,7 +82,7 @@ edit_plugins_action_stringize (
 
 void
 edit_plugins_action_free (
-	EditPluginsAction * self)
+  EditPluginsAction * self)
 {
   free (self);
 }

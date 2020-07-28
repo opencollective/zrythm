@@ -20,6 +20,8 @@
 #ifndef __AUDIO_ENGINE_DUMMY_H__
 #define __AUDIO_ENGINE_DUMMY_H__
 
+#include <stdbool.h>
+
 typedef struct AudioEngine AudioEngine;
 
 /**
@@ -27,8 +29,7 @@ typedef struct AudioEngine AudioEngine;
  */
 int
 engine_dummy_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 int
 engine_dummy_process (
@@ -39,12 +40,12 @@ engine_dummy_process (
  */
 int
 engine_dummy_midi_setup (
-  AudioEngine * self,
-  int           loading);
+  AudioEngine * self);
 
 int
 engine_dummy_activate (
-  AudioEngine * self);
+  AudioEngine * self,
+  bool          activate);
 
 void
 engine_dummy_tear_down (

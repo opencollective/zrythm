@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2018-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -40,7 +40,7 @@ typedef struct _TracklistWidget TracklistWidget;
 typedef struct _PinnedTracklistWidget
   PinnedTracklistWidget;
 
-#define TRACKLIST (&PROJECT->tracklist)
+#define TRACKLIST (PROJECT->tracklist)
 #define MAX_TRACKS 3000
 
 typedef struct Track ChordTrack;
@@ -85,6 +85,9 @@ typedef struct Tracklist
 
   /** The marker track, for convenience. */
   Track *             marker_track;
+
+  /** The tempo track, for convenience. */
+  Track *             tempo_track;
 
   /** The master track, for convenience. */
   Track *             master_track;
@@ -358,6 +361,24 @@ void
 tracklist_activate_all_plugins (
   Tracklist * self,
   bool        activate);
+
+/**
+ * Exposes each track's ports that should be
+ * exposed to the backend.
+ *
+ * This should be called after setting up the
+ * engine.
+ */
+void
+tracklist_expose_ports_to_backend (
+  Tracklist * self);
+
+Tracklist *
+tracklist_new (Project * project);
+
+void
+tracklist_free (
+  Tracklist * self);
 
 /**
  * Define guile module.

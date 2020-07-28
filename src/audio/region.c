@@ -27,6 +27,7 @@
 #include "audio/midi_region.h"
 #include "audio/instrument_track.h"
 #include "audio/pool.h"
+#include "audio/recording_manager.h"
 #include "audio/region.h"
 #include "audio/region_link_group_manager.h"
 #include "audio/stretcher.h"
@@ -43,6 +44,7 @@
 #include "gui/widgets/timeline_arranger.h"
 #include "gui/widgets/timeline_panel.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/arrays.h"
 #include "utils/flags.h"
 #include "utils/audio.h"
@@ -106,11 +108,13 @@ region_init (
  */
 void
 region_gen_name (
-  ZRegion *         region,
+  ZRegion *         self,
   const char *      base_name,
   AutomationTrack * at,
   Track *           track)
 {
+  g_return_if_fail (IS_REGION (self));
+
   /* Name to try to assign */
   char * orig_name = NULL;
   if (base_name)
@@ -124,7 +128,7 @@ region_gen_name (
   else
     orig_name = g_strdup (track->name);
 
-  region_set_name (region, orig_name, 0);
+  region_set_name (self, orig_name, 0);
   g_free (orig_name);
 }
 
@@ -136,7 +140,7 @@ region_set_lane (
   ZRegion *    self,
   TrackLane * lane)
 {
-  g_return_if_fail (lane);
+  g_return_if_fail (IS_REGION (self) && lane);
   self->id.lane_pos = lane->pos;
   self->id.track_pos = lane->track_pos;
 }
@@ -154,7 +158,7 @@ region_move_to_track (
   ZRegion *  region,
   Track *    track)
 {
-  g_return_if_fail (region && track);
+  g_return_if_fail (IS_REGION (region) && track);
 
   /*g_message ("moving region %s to track %s",*/
     /*region->name, track->name);*/
@@ -215,6 +219,8 @@ region_stretch (
   ZRegion * self,
   double    ratio)
 {
+  g_return_if_fail (IS_REGION (self));
+
   self->stretching = true;
   ArrangerObject * obj = (ArrangerObject *) self;
 
@@ -256,7 +262,7 @@ region_stretch (
         Stretcher * stretcher =
           stretcher_new_rubberband (
             AUDIO_ENGINE->sample_rate,
-            clip->channels, ratio, 1.0);
+            clip->channels, ratio, 1.0, false);
         ssize_t returned_frames =
           stretcher_stretch_interleaved (
             stretcher, self->frames,
@@ -275,6 +281,8 @@ region_stretch (
           obj, &new_end_pos,
           ARRANGER_OBJECT_POSITION_TYPE_LOOP_END,
           F_NO_VALIDATE);
+        position_add_frames (
+          &new_end_pos, obj->pos.frames);
         arranger_object_set_position (
           obj, &new_end_pos,
           ARRANGER_OBJECT_POSITION_TYPE_END,
@@ -286,6 +294,7 @@ region_stretch (
       break;
     }
 
+  obj->use_cache = false;
   self->stretching = false;
 }
 
@@ -305,7 +314,7 @@ region_move_to_lane (
   ZRegion *    region,
   TrackLane * lane)
 {
-  g_return_if_fail (region && lane);
+  g_return_if_fail (IS_REGION (region) && lane);
 
   Track * region_track =
     arranger_object_get_track (
@@ -330,7 +339,7 @@ region_move_to_lane (
   if (is_clip_editor_region)
     {
       clip_editor_set_region (
-        CLIP_EDITOR, region);
+        CLIP_EDITOR, region, true);
     }
 
   arranger_object_select (
@@ -353,14 +362,15 @@ region_set_automation_track (
   ZRegion *         self,
   AutomationTrack * at)
 {
-  g_return_if_fail (at);
+  g_return_if_fail (IS_REGION (self) && at);
 
   /*int is_clip_editor_region = 0;*/
   if (region_identifier_is_equal (
         &self->id, &CLIP_EDITOR->region_id))
     {
       /*is_clip_editor_region = 1;*/
-      clip_editor_set_region (CLIP_EDITOR, NULL);
+      clip_editor_set_region (
+        CLIP_EDITOR, NULL, true);
     }
   self->id.at_idx = at->index;
   Track * track =
@@ -407,10 +417,37 @@ region_type_has_lane (
     type == REGION_TYPE_AUDIO;
 }
 
+/**
+ * Sanity checking.
+ *
+ * @param is_project Whether this region ispart
+ *   of the project (as opposed to a clone in
+ *   the undo stack, etc.).
+ */
+bool
+region_sanity_check (
+  ZRegion * self,
+  bool      is_project)
+{
+  g_return_val_if_fail (IS_REGION (self), false);
+
+  if (is_project)
+    {
+      if (!region_find (&self->id))
+        {
+          return false;
+        }
+    }
+
+  return true;
+}
+
 TrackLane *
 region_get_lane (
   const ZRegion * self)
 {
+  g_return_val_if_fail (IS_REGION (self), NULL);
+
   Track * track =
     arranger_object_get_track (
       (ArrangerObject *) self);
@@ -552,18 +589,21 @@ region_find (
   if (id->type == REGION_TYPE_MIDI ||
       id->type == REGION_TYPE_AUDIO)
     {
-      if (id->track_pos >= TRACKLIST->num_tracks)
-        g_return_val_if_reached (NULL);
+      g_return_val_if_fail (
+        id->track_pos < TRACKLIST->num_tracks,
+        NULL);
+
       track =  TRACKLIST->tracks[id->track_pos];
       g_return_val_if_fail (track, NULL);
 
-      if (id->lane_pos >= track->num_lanes)
-        g_return_val_if_reached (NULL);
+      g_return_val_if_fail (
+        id->lane_pos < track->num_lanes, NULL);
       lane = track->lanes[id->lane_pos];
       g_return_val_if_fail (lane, NULL);
 
-      if (id->idx >= lane->num_regions)
-        g_return_val_if_reached (NULL);
+      g_return_val_if_fail (
+        id->idx < lane->num_regions, NULL);
+
       ZRegion * region = lane->regions[id->idx];
       g_return_val_if_fail (region, NULL);
 
@@ -695,7 +735,8 @@ region_remove_all_children (
             MidiNote * mn =
               region->midi_notes[i];
             midi_region_remove_midi_note (
-              region, mn, true, false);
+              region, mn, F_FREE,
+              F_NO_PUBLISH_EVENTS);
           }
         g_warn_if_fail (
           region->num_midi_notes == 0);
@@ -711,7 +752,7 @@ region_remove_all_children (
           {
             AutomationPoint * ap = region->aps[i];
             automation_region_remove_ap (
-              region, ap, true);
+              region, ap, F_FREE);
           }
       }
       break;
@@ -723,7 +764,8 @@ region_remove_all_children (
             ChordObject * co =
               region->chord_objects[i];
             chord_region_remove_chord_object (
-              region, co, true);
+              region, co, F_FREE,
+              F_NO_PUBLISH_EVENTS);
           }
       }
       break;
@@ -768,7 +810,7 @@ region_copy_children (
                 ARRANGER_OBJECT_CLONE_COPY_MAIN);
 
             midi_region_add_midi_note (
-              dest, mn, 0);
+              dest, mn, F_NO_PUBLISH_EVENTS);
           }
       }
       break;
@@ -809,7 +851,7 @@ region_copy_children (
                 ARRANGER_OBJECT_CLONE_COPY_MAIN);
 
             chord_region_add_chord_object (
-              dest, dest_co);
+              dest, dest_co, F_NO_PUBLISH_EVENTS);
           }
       }
       break;
@@ -976,6 +1018,67 @@ region_is_hit (
      (!inclusive &&
       r_obj->end_pos.frames >
         gframes));
+}
+
+/**
+ * Returns the ArrangerSelections based on the
+ * given region type.
+ */
+ArrangerSelections *
+region_get_arranger_selections (
+  ZRegion * self)
+{
+  ArrangerSelections * sel = NULL;
+  switch (self->id.type)
+    {
+    case REGION_TYPE_MIDI:
+      sel =
+        (ArrangerSelections *) MA_SELECTIONS;
+      break;
+    case REGION_TYPE_AUTOMATION:
+      sel =
+        (ArrangerSelections *)
+        AUTOMATION_SELECTIONS;
+      break;
+    case REGION_TYPE_CHORD:
+      sel =
+        (ArrangerSelections *)
+        CHORD_SELECTIONS;
+      break;
+    default:
+      break;
+    }
+
+  return sel;
+}
+
+/**
+ * Returns whether the region is effectively in
+ * musical mode.
+ *
+ * @note Only applicable to audio regions.
+ */
+bool
+region_get_musical_mode (
+  ZRegion * self)
+{
+  if (ZRYTHM_TESTING)
+    {
+      return true;
+    }
+
+  switch (self->musical_mode)
+    {
+    case REGION_MUSICAL_MODE_INHERIT:
+      return
+        g_settings_get_boolean (
+          S_UI, "musical-mode");
+    case REGION_MUSICAL_MODE_OFF:
+      return false;
+    case REGION_MUSICAL_MODE_ON:
+      return true;
+    }
+  g_return_val_if_reached (false);
 }
 
 /**
@@ -1146,6 +1249,34 @@ region_generate_filename (ZRegion * region)
 }
 
 /**
+ * Returns if this region is currently being
+ * recorded onto.
+ */
+bool
+region_is_recording (
+  ZRegion * self)
+{
+  if (!RECORDING_MANAGER->is_recording)
+    {
+      return false;
+    }
+
+  for (int i = 0;
+       i < RECORDING_MANAGER->num_recorded_ids;
+       i++)
+    {
+      if (region_identifier_is_equal (
+            &self->id,
+            &RECORDING_MANAGER->recorded_ids[i]))
+        {
+          return true;
+        }
+    }
+
+  return false;
+}
+
+/**
  * Disconnects the region and anything using it.
  *
  * Does not free the ZRegion or its children's
@@ -1160,7 +1291,7 @@ region_disconnect (
   if (clip_editor_region == self)
     {
       clip_editor_set_region (
-        CLIP_EDITOR, NULL);
+        CLIP_EDITOR, NULL, true);
     }
   if (TL_SELECTIONS)
     {

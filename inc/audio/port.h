@@ -27,12 +27,17 @@
 #ifndef __AUDIO_PORTS_H__
 #define __AUDIO_PORTS_H__
 
+#include "zrythm-config.h"
+
+#include <stdbool.h>
+
+#include "audio/meter.h"
 #include "audio/port_identifier.h"
 #include "utils/types.h"
 #include "zix/sem.h"
 
 #ifdef HAVE_JACK
-#include <jack/jack.h>
+#include "weak_libjack.h"
 #endif
 
 #ifdef HAVE_RTMIDI
@@ -59,6 +64,7 @@ typedef struct TrackProcessor TrackProcessor;
 typedef struct RtMidiDevice RtMidiDevice;
 typedef struct RtAudioDevice RtAudioDevice;
 typedef struct AutomationTrack AutomationTrack;
+typedef struct TruePeakDsp TruePeakDsp;
 typedef enum PanAlgorithm PanAlgorithm;
 typedef enum PanLaw PanLaw;
 
@@ -69,16 +75,17 @@ typedef enum PanLaw PanLaw;
  */
 
 #define PORT_MAGIC 456861194
-#define IS_PORT(tr) \
-  (tr && \
-   ((Port *) tr)->magic == \
-     PORT_MAGIC)
+#define IS_PORT(_p) \
+  ((_p) && \
+   ((Port *) (_p))->magic == PORT_MAGIC)
 
 #define MAX_DESTINATIONS 600
 #define FOREACH_SRCS(port) \
   for (int i = 0; i < port->num_srcs; i++)
 #define FOREACH_DESTS(port) \
   for (int i = 0; i < port->num_dests; i++)
+
+#define TIME_TO_RESET_PEAK 4800000
 
 /**
  * Special ID for owner_pl, owner_ch, etc. to indicate that
@@ -152,6 +159,9 @@ typedef struct Port
    */
   float               multipliers[MAX_DESTINATIONS];
 
+  /** Same as above for sources. */
+  float               src_multipliers[MAX_DESTINATIONS];
+
   /**
    * These indicate whether the destination Port
    * can be removed or the multiplier edited by the
@@ -165,6 +175,9 @@ typedef struct Port
    */
   int                 dest_locked[MAX_DESTINATIONS];
 
+  /** Same as above for sources. */
+  int                 src_locked[MAX_DESTINATIONS];
+
   /**
    * These indicate whether the connection is
    * enabled.
@@ -176,6 +189,9 @@ typedef struct Port
    * 1 == enabled (connected).
    */
   int                 dest_enabled[MAX_DESTINATIONS];
+
+  /** Same as above for sources. */
+  int                 src_enabled[MAX_DESTINATIONS];
 
   /** Counters. */
   int                 num_srcs;
@@ -373,6 +389,10 @@ typedef struct Port
    * processed by the UI. */
   volatile int        has_midi_events;
 
+  /** Used by the UI to detect when unprocessed
+   * MIDI events exist. */
+  gint64              last_midi_event_time;
+
   /**
    * Ring buffer for saving the contents of the
    * audio buffer to be used in the UI instead of
@@ -416,8 +436,18 @@ typedef struct Port
    */
   midi_byte_t         last_midi_status;
 
+  /**
+   * Automation track this port is attached to.
+   *
+   * To be set at runtime only (not serialized).
+   */
+  AutomationTrack *   at;
+
   /** Magic number to identify that this is a Port. */
   int                 magic;
+
+  /** Whether this is a project port. */
+  bool                is_project;
 } Port;
 
 static const cyaml_strval_t
@@ -452,12 +482,24 @@ port_fields_schema[] =
     Port, multipliers, num_dests,
     &float_schema, 0, CYAML_UNLIMITED),
   CYAML_FIELD_SEQUENCE_COUNT (
+    "src_multipliers", CYAML_FLAG_DEFAULT,
+    Port, src_multipliers, num_srcs,
+    &float_schema, 0, CYAML_UNLIMITED),
+  CYAML_FIELD_SEQUENCE_COUNT (
     "dest_locked", CYAML_FLAG_DEFAULT,
     Port, dest_locked, num_dests,
     &int_schema, 0, CYAML_UNLIMITED),
   CYAML_FIELD_SEQUENCE_COUNT (
+    "src_locked", CYAML_FLAG_DEFAULT,
+    Port, src_locked, num_srcs,
+    &int_schema, 0, CYAML_UNLIMITED),
+  CYAML_FIELD_SEQUENCE_COUNT (
     "dest_enabled", CYAML_FLAG_DEFAULT,
     Port, dest_enabled, num_dests,
+    &int_schema, 0, CYAML_UNLIMITED),
+  CYAML_FIELD_SEQUENCE_COUNT (
+    "src_enabled", CYAML_FLAG_DEFAULT,
+    Port, src_enabled, num_srcs,
     &int_schema, 0, CYAML_UNLIMITED),
   CYAML_FIELD_ENUM (
     "internal_type", CYAML_FLAG_DEFAULT,
@@ -534,14 +576,18 @@ static const cyaml_schema_value_t
  * yml.
  */
 void
-port_init_loaded (Port * port);
+port_init_loaded (
+  Port * self,
+  bool   is_project);
 
 Port *
 port_find_from_identifier (
   PortIdentifier * id);
 
 void
-stereo_ports_init_loaded (StereoPorts * sp);
+stereo_ports_init_loaded (
+  StereoPorts * sp,
+  bool          is_project);
 
 /**
  * Creates port.
@@ -597,6 +643,14 @@ stereo_ports_connect (
   StereoPorts * src,
   StereoPorts * dest,
   int           locked);
+
+void
+stereo_ports_disconnect (
+  StereoPorts * self);
+
+void
+stereo_ports_free (
+  StereoPorts * self);
 
 #ifdef HAVE_JACK
 /**
@@ -659,10 +713,13 @@ port_get_plugin (
 /**
  * To be called when the port's identifier changes
  * to update corresponding identifiers.
+ *
+ * @param track The track that owns this port.
  */
 void
 port_update_identifier (
-  Port * port);
+  Port *  self,
+  Track * track);
 
 /**
  * Returns the index of the destination in the dest
@@ -670,12 +727,16 @@ port_update_identifier (
  */
 static inline int
 port_get_dest_index (
-  Port * port,
+  Port * self,
   Port * dest)
 {
-  for (int i = 0; i < port->num_dests; i++)
+  g_return_val_if_fail (
+    IS_PORT (self) && IS_PORT (dest) &&
+    self->is_project && dest->is_project, -1);
+
+  for (int i = 0; i < self->num_dests; i++)
     {
-      if (port->dests[i] == dest)
+      if (self->dests[i] == dest)
         return i;
     }
   g_return_val_if_reached (-1);
@@ -687,12 +748,16 @@ port_get_dest_index (
  */
 static inline int
 port_get_src_index (
-  Port * port,
+  Port * self,
   Port * src)
 {
-  for (int i = 0; i < port->num_srcs; i++)
+  g_return_val_if_fail (
+    IS_PORT (self) && IS_PORT (src) &&
+    self->is_project && src->is_project, -1);
+
+  for (int i = 0; i < self->num_srcs; i++)
     {
-      if (port->srcs[i] == src)
+      if (self->srcs[i] == src)
         return i;
     }
   g_return_val_if_reached (-1);
@@ -709,6 +774,19 @@ port_set_multiplier_by_index (
   float  val)
 {
   port->multipliers[idx] = val;
+}
+
+/**
+ * Set the multiplier for a destination by its
+ * index in the dest array.
+ */
+static inline void
+port_set_src_multiplier_by_index (
+  Port * port,
+  int    idx,
+  float  val)
+{
+  port->src_multipliers[idx] = val;
 }
 
 /**
@@ -804,8 +882,8 @@ void
 port_set_control_value (
   Port *      self,
   const float val,
-  const int   is_normalized,
-  const int   forward_event);
+  const bool  is_normalized,
+  const bool  forward_event);
 
 /**
  * Gets the given control value from the
@@ -819,19 +897,10 @@ port_get_control_value (
   Port *      self,
   const bool  normalize);
 
-/**
- * Returns the RMS of the last n cycles for
- * audio ports.
- *
- * @param num_cycles Number of cycles to take into
- *   account, normally 1. If this is more than 1,
- *   the minimum of available cycles or given
- *   cycles is chosen.
- */
-float
-port_get_rms_db (
-  Port * port,
-  int    num_cycles);
+void
+port_set_is_project (
+  Port * self,
+  bool   is_project);
 
 /**
  * Connets src to dest.
@@ -882,11 +951,14 @@ port_get_num_unlocked_dests (Port * port);
 /**
  * Updates the track pos on a track port and
  * all its source/destination identifiers.
+ *
+ * @param track The track that owns this port.
  */
 void
 port_update_track_pos (
-  Port * port,
-  int    pos);
+  Port *  port,
+  Track * track,
+  int     pos);
 
 /**
  * Apply given fader value to port.
@@ -967,6 +1039,7 @@ port_set_owner_fader (
   Port *    port,
   Fader *   fader);
 
+#if 0
 /**
  * Sets the owner fader & its ID.
  */
@@ -974,6 +1047,7 @@ void
 port_set_owner_prefader (
   Port *                 port,
   PassthroughProcessor * fader);
+#endif
 
 /**
  * Sets the owner plugin & its ID.
@@ -995,7 +1069,7 @@ port_is_connection_locked (
 /**
  * Returns if the two ports are connected or not.
  */
-int
+bool
 ports_connected (
   Port * src, Port * dest);
 
@@ -1004,7 +1078,7 @@ ports_connected (
  * the connection will be valid and won't break the
  * acyclicity of the graph).
  */
-int
+bool
 ports_can_be_connected (
   const Port * src,
   const Port *dest);
@@ -1044,6 +1118,14 @@ port_clear_buffer (Port * port);
  */
 int
 port_disconnect_all (Port * port);
+
+/**
+ * Verifies that the srcs and dests are correct
+ * for project ports.
+ */
+void
+port_verify_src_and_dests (
+  Port * self);
 
 /**
  * Applies the pan to the given L/R ports.

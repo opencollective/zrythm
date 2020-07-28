@@ -20,35 +20,24 @@
 /**
  * \file
  *
- * The Zrythm GTK application.
+ * The main Zrythm struct.
  */
 
 #ifndef __ZRYTHM_H__
 #define __ZRYTHM_H__
 
-#include "audio/metronome.h"
-#include "audio/snap_grid.h"
-#include "gui/backend/events.h"
-#include "gui/backend/file_manager.h"
-#include "plugins/plugin_manager.h"
-#include "settings/settings.h"
-#include "utils/log.h"
+#include "zix/sem.h"
 
-#include <gtk/gtk.h>
-
-#define ZRYTHM_APP_TYPE (zrythm_app_get_type ())
-G_DECLARE_FINAL_TYPE (
-  ZrythmApp, zrythm_app, ZRYTHM, APP,
-  GtkApplication)
-
-typedef struct _MainWindowWidget MainWindowWidget;
 typedef struct Project Project;
 typedef struct Symap Symap;
-typedef struct CairoCaches CairoCaches;
-typedef struct UiCaches UiCaches;
-typedef struct MPMCQueue MPMCQueue;
-typedef struct ObjectPool ObjectPool;
 typedef struct RecordingManager RecordingManager;
+typedef struct EventManager EventManager;
+typedef struct ObjectUtils ObjectUtils;
+typedef struct PluginManager PluginManager;
+typedef struct FileManager FileManager;
+typedef struct Settings Settings;
+typedef struct Log Log;
+typedef struct CairoCaches CairoCaches;
 
 /**
  * @addtogroup general
@@ -120,31 +109,36 @@ typedef enum ZrythmDirType
   /** Subdirs of \ref ZRYTHM_DIR_USER_TOP. */
   ZRYTHM_DIR_USER_PROJECTS,
   ZRYTHM_DIR_USER_TEMPLATES,
-  ZRYTHM_DIR_USER_LOG,
   ZRYTHM_DIR_USER_THEMES,
+
+  /** Log files. */
+  ZRYTHM_DIR_USER_LOG,
+
+  /** Profiling files. */
+  ZRYTHM_DIR_USER_PROFILING,
+
+  /** Gdb backtrace files. */
+  ZRYTHM_DIR_USER_GDB,
 
 } ZrythmDirType;
 
 /**
  * To be used throughout the program.
  *
- * Everything here should be global and function regardless
- * of the project.
+ * Everything here should be global and function
+ * regardless of the project.
  */
 typedef struct Zrythm
 {
   /**
    * Manages plugins (loading, instantiating, etc.)
    */
-  PluginManager       plugin_manager;
-
-  /** Main window. */
-  MainWindowWidget *  main_window;
+  PluginManager *     plugin_manager;
 
   /**
    * Application settings
    */
-  Settings            settings;
+  Settings *          settings;
 
   /**
    * Project data.
@@ -167,9 +161,6 @@ typedef struct Zrythm
    * absolute paths. */
   char **             templates;
 
-  /** The metronome. */
-  Metronome           metronome;
-
   /** Whether the open file is a template to be used
    * to create a new project from. */
   bool                opening_template;
@@ -191,31 +182,21 @@ typedef struct Zrythm
    */
   char *              open_filename;
 
-  /**
-   * Event queue, mainly for GUI events.
-   */
-  MPMCQueue *         event_queue;
-
-  /**
-   * Object pool of event structs to avoid real time
-   * allocation.
-   */
-  ObjectPool *        event_obj_pool;
+  EventManager *      event_manager;
 
   /** Recording manager. */
   RecordingManager *  recording_manager;
 
   /** File manager. */
-  FileManager         file_manager;
+  FileManager *       file_manager;
 
   /**
    * String interner for internal things.
    */
   Symap *             symap;
 
-  CairoCaches *       cairo_caches;
-
-  UiCaches *          ui_caches;
+  /** Object utils. */
+  ObjectUtils *       object_utils;
 
   /**
    * In debug mode or not (determined by GSetting).
@@ -229,30 +210,8 @@ typedef struct Zrythm
    */
   bool                testing;
 
-  /** Initialization thread. */
-  GThread *           init_thread;
-
-  /**
-   * The GTK thread where the main GUI loop runs.
-   *
-   * This is stored for identification purposes
-   * in other threads.
-   */
-  GThread *           gtk_thread;
-
-  /** Status text to be used in the splash screen. */
-  char                status[800];
-
-  /** Semaphore for setting the progress in the
-   * splash screen from a non-gtk thread. */
-  ZixSem              progress_status_lock;
-
   /** Log settings. */
-  Log                 log;
-
-  /** Flag to set when initialization has
-   * finished. */
-  bool                init_finished;
+  Log *               log;
 
   /**
    * Progress done (0.0 ~ 1.0).
@@ -265,28 +224,17 @@ typedef struct Zrythm
   /** 1 if Zrythm has a UI, 0 if headless (eg, when
    * unit-testing). */
   bool                have_ui;
+
+  CairoCaches *       cairo_caches;
+
+  /** Zrythm directory used during unit tests. */
+  char *              testing_dir;
 } Zrythm;
-
-/**
- * The global struct.
- *
- * Contains data that is irrelevant to the project.
- */
-struct _ZrythmApp
-{
-  GtkApplication      parent;
-
-  Zrythm *            zrythm;
-};
 
 /**
  * Global variable, should be available to all files.
  */
 extern Zrythm * zrythm;
-extern ZrythmApp * zrythm_app;
-
-ZrythmApp *
-zrythm_app_new (void);
 
 void
 zrythm_add_to_recent_projects (
@@ -335,28 +283,50 @@ zrythm_get_dir (
   ZrythmDirType type);
 
 /**
- * Sets the current status and progress percentage
- * during loading.
+ * Returns the prefix or in the case of windows
+ * the root dir (C/program files/zrythm) or in the
+ * case of macos the bundle path.
  *
- * The splash screen then reads these values from
- * the Zrythm struct.
+ * In all cases, "share" is expected to be found
+ * in this dir.
+ *
+ * @return A newly allocated string.
  */
-void
-zrythm_set_progress_status (
-  Zrythm *     self,
-  const char * text,
-  const double perc);
+char *
+zrythm_get_prefix (void);
 
 /**
- * Called immediately after the main GTK loop
- * terminates.
+ * Gets the zrythm directory, either from the
+ * settings if non-empty, or the default
+ * ($XDG_DATA_DIR/zrythm).
  *
- * This is also called manually on SIGINT.
+ * @param force_default Ignore the settings and get
+ *   the default dir.
+ *
+ * Must be free'd by caler.
+ */
+char *
+zrythm_get_user_dir (
+  bool  force_default);
+
+/**
+ * Creates a new Zrythm instance.
+ *
+ * @param have_ui Whether Zrythm is instantiated
+ *   with a UI (false if headless).
+ * @param testing Whether this is a unit test.
+ */
+Zrythm *
+zrythm_new (
+  bool have_ui,
+  bool testing);
+
+/**
+ * Frees the instance and any unfreed members.
  */
 void
-zrythm_on_shutdown (
-  GApplication * application,
-  ZrythmApp *    self);
+zrythm_free (
+  Zrythm * self);
 
 /**
  * @}

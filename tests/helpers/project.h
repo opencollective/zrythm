@@ -26,6 +26,8 @@
 #ifndef __TEST_HELPERS_PROJECT_H__
 #define __TEST_HELPERS_PROJECT_H__
 
+#include "zrythm-test-config.h"
+
 #include "audio/audio_region.h"
 #include "audio/automation_region.h"
 #include "audio/chord_region.h"
@@ -35,6 +37,7 @@
 #include "audio/master_track.h"
 #include "audio/midi_note.h"
 #include "audio/region.h"
+#include "audio/tempo_track.h"
 #include "audio/tracklist.h"
 #include "project.h"
 #include "utils/cairo.h"
@@ -245,11 +248,15 @@ test_project_rebootstrap_timeline (
   Position * p1,
   Position * p2)
 {
+  bool was_active = AUDIO_ENGINE->activated;
+  engine_activate (AUDIO_ENGINE, false);
+
   /* remove any previous work */
   chord_track_clear (P_CHORD_TRACK);
   marker_track_clear (P_MARKER_TRACK);
+  tempo_track_clear (P_TEMPO_TRACK);
   for (int i = TRACKLIST->num_tracks - 1;
-       i >= 3; i--)
+       i >= 4; i--)
     {
       Track * track = TRACKLIST->tracks[i];
       tracklist_remove_track (
@@ -348,7 +355,7 @@ test_project_rebootstrap_timeline (
   ChordObject * c =
     chord_object_new (&r->id, 0, 1);
   chord_region_add_chord_object (
-    r, c);
+    r, c, F_NO_PUBLISH_EVENTS);
   arranger_object_pos_setter (
     (ArrangerObject *) c, p1);
   arranger_selections_add_object (
@@ -357,7 +364,7 @@ test_project_rebootstrap_timeline (
   c =
     chord_object_new (&r->id, 0, 1);
   chord_region_add_chord_object (
-    r, c);
+    r, c, F_NO_PUBLISH_EVENTS);
   arranger_object_pos_setter (
     (ArrangerObject *) c, p2);
   arranger_selections_add_object (
@@ -439,6 +446,8 @@ test_project_rebootstrap_timeline (
   tracklist_append_track (
     TRACKLIST, track, F_NO_PUBLISH_EVENTS,
     F_NO_RECALC_GRAPH);
+
+  engine_activate (AUDIO_ENGINE, was_active);
 }
 
 /**

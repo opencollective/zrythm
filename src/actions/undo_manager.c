@@ -24,32 +24,40 @@
 #include "gui/widgets/home_toolbar.h"
 #include "gui/widgets/main_window.h"
 #include "project.h"
+#include "utils/objects.h"
 #include "utils/stack.h"
+#include "zrythm_app.h"
 
 /**
- * Inits the undo manager by creating or
- * populating the undo/redo stacks.
- *
- * @param loading True if this is a loaded project,
- *   false if a new project.
+ * Inits the undo manager by populating the
+ * undo/redo stacks.
  */
 void
-undo_manager_init (
-  UndoManager * self,
-  int           loading)
+undo_manager_init_loaded (
+  UndoManager * self)
 {
-  g_message ("Initializing undo manager...");
+  g_message ("%s: loading...", __func__);
+  undo_stack_init_loaded (self->undo_stack);
+  undo_stack_init_loaded (self->redo_stack);
+  g_message ("%s: done", __func__);
+}
 
-  if (loading)
-    {
-      undo_stack_init_loaded (self->undo_stack);
-      undo_stack_init_loaded (self->redo_stack);
-    }
-  else
-    {
-      self->undo_stack = undo_stack_new ();
-      self->redo_stack = undo_stack_new ();
-    }
+/**
+ * Inits the undo manager by creating the undo/redo
+ * stacks.
+ */
+UndoManager *
+undo_manager_new (void)
+{
+  g_message ("%s: creating...", __func__);
+  UndoManager * self = object_new (UndoManager);
+
+  self->undo_stack = undo_stack_new ();
+  self->redo_stack = undo_stack_new ();
+
+  g_message ("%s: done", __func__);
+
+  return self;
 }
 
 /**
@@ -80,6 +88,10 @@ undo_manager_undo (UndoManager * self)
         (UndoableAction *)
         undo_stack_pop_last (
           self->redo_stack);
+
+      /* TODO create functions to delet eunnecessary
+       * files held by the action (eg, something
+       * that calls plugin_delete_state_files()) */
       undoable_action_free (action_to_delete);
     }
 
@@ -128,17 +140,23 @@ undo_manager_redo (UndoManager * self)
 /**
  * Does performs the action and pushes it to the
  * undo stack, clearing the redo stack.
+ *
+ * @return Non-zero if error.
  */
-void
+int
 undo_manager_perform (
   UndoManager *    self,
   UndoableAction * action)
 {
   /* if error return */
-  if (undoable_action_do (action))
+  int err = undoable_action_do (action);
+  if (err)
     {
-      g_message ("action not performed");
-      return;
+      g_message (
+        "%s: action not performed (err %d)",
+        __func__, err);
+
+      return err;
     }
 
   /* if the undo stack is full, delete the last
@@ -152,12 +170,16 @@ undo_manager_perform (
 
   undo_stack_push (self->undo_stack, action);
 
-  undo_stack_clear (self->redo_stack);
+  undo_stack_clear (self->redo_stack, true);
 
-  if (MAIN_WINDOW && MW_HEADER &&
+  if (ZRYTHM_HAVE_UI && MAIN_WINDOW && MW_HEADER &&
       MW_HOME_TOOLBAR)
-    home_toolbar_widget_refresh_undo_redo_buttons (
-      MW_HOME_TOOLBAR);
+    {
+      home_toolbar_widget_refresh_undo_redo_buttons (
+        MW_HOME_TOOLBAR);
+    }
+
+  return 0;
 }
 
 /**
@@ -165,10 +187,27 @@ undo_manager_perform (
  */
 void
 undo_manager_clear_stacks (
-  UndoManager * self)
+  UndoManager * self,
+  bool          free)
 {
   g_return_if_fail (
     self && self->undo_stack && self->redo_stack);
-  undo_stack_clear (self->undo_stack);
-  undo_stack_clear (self->redo_stack);
+  undo_stack_clear (self->undo_stack, free);
+  undo_stack_clear (self->redo_stack, free);
+}
+
+void
+undo_manager_free (
+  UndoManager * self)
+{
+  g_message ("%s: freeing...", __func__);
+
+  object_free_w_func_and_null (
+    undo_stack_free, self->undo_stack);
+  object_free_w_func_and_null (
+    undo_stack_free, self->redo_stack);
+
+  object_zero_and_free (self);
+
+  g_message ("%s: done", __func__);
 }

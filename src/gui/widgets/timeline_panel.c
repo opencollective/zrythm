@@ -18,6 +18,8 @@
  */
 
 #include "audio/transport.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/bot_dock_edge.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/clip_editor.h"
@@ -37,6 +39,7 @@
 #include "gui/widgets/tracklist_header.h"
 #include "project.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 G_DEFINE_TYPE (
   TimelinePanelWidget,
@@ -125,6 +128,20 @@ timeline_panel_widget_setup (
   g_signal_connect (
     G_OBJECT (adj), "value-changed",
     G_CALLBACK (on_hadj_value_changed), self);
+}
+
+/**
+ * Prepare for finalization.
+ */
+void
+timeline_panel_widget_tear_down (
+  TimelinePanelWidget * self)
+{
+  g_message ("tearing down %p...", self);
+
+  tracklist_widget_tear_down (self->tracklist);
+
+  g_message ("done");
 }
 
 static void

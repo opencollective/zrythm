@@ -40,6 +40,7 @@
 #include "project.h"
 #include "utils/gtk.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -48,10 +49,46 @@ G_DEFINE_TYPE (
   clip_editor_inner_widget,
   GTK_TYPE_BOX)
 
+/**
+ * Adds or remove the widget from the
+ * "left of ruler" size group.
+ */
+void
+clip_editor_inner_widget_add_to_left_of_ruler_sizegroup (
+  ClipEditorInnerWidget * self,
+  GtkWidget *             widget,
+  bool                    add)
+{
+  if (add)
+    {
+      gtk_size_group_add_widget (
+        self->left_of_ruler_size_group, widget);
+      g_message ("%s: adding %s",
+        __func__,
+        gtk_widget_get_name (widget));
+    }
+  else
+    {
+      GSList * list =
+        gtk_size_group_get_widgets (
+          self->left_of_ruler_size_group);
+      if (g_slist_index (list, widget) >= 0)
+        {
+          gtk_size_group_remove_widget (
+            self->left_of_ruler_size_group, widget);
+          g_message ("%s: removing %s",
+            __func__,
+            gtk_widget_get_name (widget));
+        }
+    }
+}
+
 void
 clip_editor_inner_widget_refresh (
   ClipEditorInnerWidget * self)
 {
+  g_message ("refreshing...");
+
   ZRegion * r =
     clip_editor_get_region (CLIP_EDITOR);
   ArrangerObject * r_obj =
@@ -69,26 +106,40 @@ clip_editor_inner_widget_refresh (
         self->track_name_label,
         track_get_name (track));
 
+      /* remove all from the size group */
       GtkWidget * visible_w =
         gtk_stack_get_visible_child (
-          GTK_STACK (MW_CLIP_EDITOR));
+          self->editor_stack);
       if (visible_w ==
           GTK_WIDGET (self->midi_editor_space))
-        midi_editor_space_widget_update_size_group (
-          self->midi_editor_space, 0);
-      if (visible_w ==
+        {
+          midi_editor_space_widget_update_size_group (
+            self->midi_editor_space, 0);
+        }
+      else if (visible_w ==
           GTK_WIDGET (self->audio_editor_space))
-        audio_editor_space_widget_update_size_group (
-          self->audio_editor_space, 0);
-      if (visible_w ==
+        {
+          audio_editor_space_widget_update_size_group (
+            self->audio_editor_space, 0);
+        }
+      else if (visible_w ==
           GTK_WIDGET (self->chord_editor_space))
-        chord_editor_space_widget_update_size_group (
-          self->chord_editor_space, 0);
-      if (visible_w ==
+        {
+          chord_editor_space_widget_update_size_group (
+            self->chord_editor_space, 0);
+        }
+      else if (visible_w ==
           GTK_WIDGET (self->automation_editor_space))
-        automation_editor_space_widget_update_size_group (
-          self->automation_editor_space, 0);
+        {
+          automation_editor_space_widget_update_size_group (
+            self->automation_editor_space, 0);
+        }
+      else
+        {
+          g_warn_if_reached ();
+        }
 
+      /* add one to the size group */
       switch (r->id.type)
         {
         case REGION_TYPE_MIDI:
@@ -130,6 +181,8 @@ clip_editor_inner_widget_refresh (
           break;
         }
     }
+
+  g_message ("done");
 }
 
 void

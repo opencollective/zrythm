@@ -29,6 +29,9 @@ typedef enum EditTracksActionType
   EDIT_TRACK_ACTION_TYPE_MUTE,
   EDIT_TRACK_ACTION_TYPE_VOLUME,
   EDIT_TRACK_ACTION_TYPE_PAN,
+
+  /** Direct out change. */
+  EDIT_TRACK_ACTION_TYPE_DIRECT_OUT,
 } EditTracksActionType;
 
 static const cyaml_strval_t
@@ -42,6 +45,8 @@ static const cyaml_strval_t
     EDIT_TRACK_ACTION_TYPE_VOLUME    },
   { "pan",
     EDIT_TRACK_ACTION_TYPE_PAN    },
+  { "direct out",
+    EDIT_TRACK_ACTION_TYPE_DIRECT_OUT    },
 };
 
 typedef struct Track Track;
@@ -54,11 +59,6 @@ typedef struct EditTracksAction
   EditTracksActionType  type;
 
   TracklistSelections * tls;
-
-  /**
-   * The track that originated the action.
-   */
-  int                   main_track_pos;
 
   /* --------------- DELTAS ---------------- */
 
@@ -73,6 +73,9 @@ typedef struct EditTracksAction
 
   /* -------------- end DELTAS ------------- */
 
+  /** Track position to direct output to. */
+  int                   new_direct_out_pos;
+
 } EditTracksAction;
 
 static const cyaml_schema_field_t
@@ -82,31 +85,23 @@ static const cyaml_schema_field_t
     "parent_instance", CYAML_FLAG_DEFAULT,
     EditTracksAction, parent_instance,
     undoable_action_fields_schema),
-  CYAML_FIELD_ENUM (
-    "type", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_ENUM (
     EditTracksAction, type,
-    edit_tracks_action_type_strings,
-    CYAML_ARRAY_LEN (
-      edit_tracks_action_type_strings)),
+    edit_tracks_action_type_strings),
   CYAML_FIELD_MAPPING_PTR (
     "tls", CYAML_FLAG_POINTER,
     EditTracksAction, tls,
     tracklist_selections_fields_schema),
-  CYAML_FIELD_INT (
-    "main_track_pos", CYAML_FLAG_DEFAULT,
-    EditTracksAction, main_track_pos),
-  CYAML_FIELD_INT (
-    "solo_new", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     EditTracksAction, solo_new),
-  CYAML_FIELD_INT (
-    "mute_new", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_INT (
     EditTracksAction, mute_new),
-  CYAML_FIELD_FLOAT (
-    "vol_delta", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_FLOAT (
     EditTracksAction, vol_delta),
-  CYAML_FIELD_FLOAT (
-    "pan_delta", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_FLOAT (
     EditTracksAction, pan_delta),
+  YAML_FIELD_INT (
+    EditTracksAction, new_direct_out_pos),
 
   CYAML_FIELD_END
 };
@@ -119,6 +114,10 @@ static const cyaml_schema_value_t
     edit_tracks_action_fields_schema),
 };
 
+void
+edit_tracks_action_init_loaded (
+  EditTracksAction * self);
+
 /**
  * All-in-one constructor.
  *
@@ -127,13 +126,37 @@ static const cyaml_schema_value_t
  */
 UndoableAction *
 edit_tracks_action_new (
-  EditTracksActionType type,
-  Track *              main_track,
+  EditTracksActionType  type,
   TracklistSelections * tls,
-  float                vol_delta,
-  float                pan_delta,
-  int                  solo_new,
-  int                  mute_new);
+  Track *               direct_out,
+  float                 vol_delta,
+  float                 pan_delta,
+  bool                  solo_new,
+  bool                  mute_new);
+
+/**
+ * Wrapper over edit_tracks_action_new().
+ */
+UndoableAction *
+edit_tracks_action_new_mute (
+  TracklistSelections * tls,
+  bool                  mute_new);
+
+/**
+ * Wrapper over edit_tracks_action_new().
+ */
+UndoableAction *
+edit_tracks_action_new_solo (
+  TracklistSelections * tls,
+  bool                  solo_new);
+
+/**
+ * Wrapper over edit_tracks_action_new().
+ */
+UndoableAction *
+edit_tracks_action_new_direct_out (
+  TracklistSelections * tls,
+  Track *               direct_out);
 
 int
 edit_tracks_action_do (

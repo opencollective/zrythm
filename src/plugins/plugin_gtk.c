@@ -34,11 +34,12 @@
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include "audio/engine.h"
 #include "audio/track.h"
-#include "gui/backend/events.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/lv2/lv2_gtk.h"
 #include "plugins/lv2/lv2_state.h"
@@ -47,6 +48,7 @@
 #include "settings/settings.h"
 #include "project.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -74,6 +76,7 @@ on_save_activate (
     default:
       break;
     }
+#if 0
   GtkWidget* dialog = gtk_file_chooser_dialog_new(
     _("Save State"),
     (GtkWindow*)plugin->window,
@@ -94,7 +97,7 @@ on_save_activate (
       switch (plugin->descr->protocol)
         {
         case PROT_LV2:
-          lv2_state_save (plugin->lv2, base);
+          lv2_state_save_to_file (plugin->lv2, base);
           break;
         case PROT_VST:
           break;
@@ -104,8 +107,8 @@ on_save_activate (
       g_free(path);
       g_free(base);
     }
-
   gtk_widget_destroy(dialog);
+#endif
 }
 
 void
@@ -113,45 +116,15 @@ plugin_gtk_set_window_title (
   Plugin *    plugin,
   GtkWindow * window)
 {
-  g_return_if_fail (plugin && plugin->descr);
-  Track * track =
-    plugin_get_track (plugin);
-  const char* track_name = track->name;
-  const char* plugin_name = plugin->descr->name;
   g_return_if_fail (
-    track_name && plugin_name && window);
+    plugin && plugin->descr && window);
 
-  char title[500];
-  sprintf (
-    title,
-    "%s (%s #%d)",
-    plugin_name, track_name, plugin->id.slot);
-
-  switch (plugin->descr->protocol)
-    {
-    case PROT_LV2:
-      if (plugin->lv2->preset)
-        {
-          Lv2Plugin * lv2 = plugin->lv2;
-          const char* preset_label =
-            lilv_state_get_label (lv2->preset);
-          g_return_if_fail (preset_label);
-          char preset_part[500];
-          sprintf (
-            preset_part, " - %s",
-            preset_label);
-          strcat (
-            title, preset_part);
-        }
-      break;
-    case PROT_VST:
-      /* TODO */
-      break;
-    default:
-      break;
-    }
+  char * title =
+    plugin_generate_window_title (plugin);
 
   gtk_window_set_title (window, title);
+
+  g_free (title);
 }
 
 void

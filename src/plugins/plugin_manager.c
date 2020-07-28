@@ -36,7 +36,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -47,11 +47,14 @@
 #include "plugins/plugin.h"
 #include "plugins/plugin_manager.h"
 #include "plugins/lv2_plugin.h"
+#include "settings/settings.h"
 #include "utils/arrays.h"
 #include "utils/io.h"
+#include "utils/objects.h"
 #include "utils/string.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -148,123 +151,17 @@ static int sort_plugin_func (
     /*}*/
 /*}*/
 
-/**
- * Initializes plugin manager.
- */
-void
-plugin_manager_init (PluginManager * self)
+static void
+cache_lv2_uris (
+  PluginManager * self)
 {
-  g_message ("Initializing plugin manager...");
-  self->num_plugins = 0;
-  self->num_plugin_categories = 0;
-
-  self->symap = symap_new();
-  zix_sem_init(&self->symap_lock, 1);
-
-  /* init lv2 settings */
-  g_message ("Creating Lilv World...");
-  LilvWorld * world = lilv_world_new ();
-  self->lv2_nodes.lilv_world = world;
-
-  /* load all installed plugins on system */
-#ifndef _WOE32
-  LilvNode * lv2_path = NULL;
-  char * env_lv2_path = getenv ("LV2_PATH");
-  if (env_lv2_path && (strlen (env_lv2_path) > 0))
-    {
-      self->lv2_path = g_strdup (env_lv2_path);
-      lv2_path =
-        lilv_new_string (world, env_lv2_path);
-    }
-  else
-    {
-      if (string_is_equal (
-            LIBDIR_NAME, "lib", 0))
-        {
-          self->lv2_path =
-            g_strdup_printf (
-              "%s/.lv2:/usr/local/lib/lv2:"
-              "/usr/lib/lv2",
-              g_get_home_dir ());
-          lv2_path =
-            lilv_new_string (
-              world, self->lv2_path);
-        }
-      else
-        {
-          self->lv2_path =
-            g_strdup_printf (
-              "%s/.lv2:/usr/local/" LIBDIR_NAME
-              "/lv2:/usr/" LIBDIR_NAME "/lv2:"
-              /* some distros report the wrong
-               * LIBDIR_NAME so hardcode these */
-              "/usr/local/lib/lv2:/usr/lib/lv2",
-              g_get_home_dir ());
-          lv2_path =
-            lilv_new_string (
-              world, self->lv2_path);
-        }
-    }
-  g_return_if_fail (lv2_path);
-  lilv_world_set_option (
-    world, LILV_OPTION_LV2_PATH, lv2_path);
-#endif
-  lilv_world_load_all (world);
-
-  /*load bundled plugins */
-#ifndef _WOE32
-  GError * err;
-  const char * path =
-    CONFIGURE_LIBDIR "/zrythm/lv2";
-  if (g_file_test (path,
-                   G_FILE_TEST_EXISTS |
-                   G_FILE_TEST_IS_DIR))
-    {
-      GDir * bundle_lv2_dir =
-        g_dir_open (path, 0, &err);
-      if (bundle_lv2_dir)
-        {
-          const char * dir;
-          char * str;
-          while ((dir = g_dir_read_name (bundle_lv2_dir)))
-            {
-              str =
-                g_strdup_printf (
-                  "file://%s%s%s%smanifest.ttl",
-                  path,
-                  G_DIR_SEPARATOR_S,
-                  dir,
-                  G_DIR_SEPARATOR_S);
-              LilvNode * uri =
-                lilv_new_uri (world, str);
-              lilv_world_load_bundle (
-                world, uri);
-              g_message ("Loaded bundled plugin at %s",
-                         str);
-              g_free (str);
-              lilv_node_free (uri);
-            }
-        }
-      else
-        {
-          char * msg =
-            g_strdup_printf ("%s%s",
-            _("Error loading LV2 bundle dir: "),
-            err->message);
-          ui_show_error_message (
-            MAIN_WINDOW ? MAIN_WINDOW : NULL,
-            msg);
-          g_free (msg);
-        }
-    }
-#endif
-
-  g_message ("Caching LV2 URIs...");
+  g_message ("%s: Caching...", __func__);
 
   /* Cache URIs */
   Lv2Nodes * nodes = &self->lv2_nodes;
 #define ADD_LV2_NODE(key,val) \
-  nodes->key = lilv_new_uri (world, val);
+  nodes->key = \
+    lilv_new_uri (self->lv2_nodes.lilv_world, val)
 
   /* in alphabetical order */
   ADD_LV2_NODE (atom_AtomPort, LV2_ATOM__AtomPort);
@@ -449,6 +346,82 @@ plugin_manager_init (PluginManager * self)
   nodes->end = NULL;
 #undef ADD_LV2_NODE
 
+  g_message ("%s: done", __func__);
+}
+
+static void
+create_and_load_lilv_word (
+  PluginManager * self)
+{
+  g_message ("Creating Lilv World...");
+  LilvWorld * world = lilv_world_new ();
+  self->lv2_nodes.lilv_world = world;
+
+  /* load all installed plugins on system */
+#if !defined (_WOE32) && !defined (__APPLE__)
+  LilvNode * lv2_path = NULL;
+  char * env_lv2_path = getenv ("LV2_PATH");
+  if (env_lv2_path && (strlen (env_lv2_path) > 0))
+    {
+      self->lv2_path = g_strdup (env_lv2_path);
+      lv2_path =
+        lilv_new_string (world, env_lv2_path);
+    }
+  else
+    {
+      if (string_is_equal (
+            LIBDIR_NAME, "lib", 0))
+        {
+          self->lv2_path =
+            g_strdup_printf (
+              "%s/.lv2:/usr/local/lib/lv2:"
+              "/usr/lib/lv2",
+              g_get_home_dir ());
+          lv2_path =
+            lilv_new_string (
+              world, self->lv2_path);
+        }
+      else
+        {
+          self->lv2_path =
+            g_strdup_printf (
+              "%s/.lv2:/usr/local/" LIBDIR_NAME
+              "/lv2:/usr/" LIBDIR_NAME "/lv2:"
+              /* some distros report the wrong
+               * LIBDIR_NAME so hardcode these */
+              "/usr/local/lib/lv2:/usr/lib/lv2",
+              g_get_home_dir ());
+          lv2_path =
+            lilv_new_string (
+              world, self->lv2_path);
+        }
+    }
+  g_return_if_fail (lv2_path);
+  g_message (
+    "%s: LV2 path: %s", __func__, self->lv2_path);
+  lilv_world_set_option (
+    world, LILV_OPTION_LV2_PATH, lv2_path);
+#endif
+  if (ZRYTHM_TESTING)
+    {
+      g_message (
+        "%s: loading specifications and plugin "
+        "classes...",  __func__);
+      lilv_world_load_specifications (world);
+      lilv_world_load_plugin_classes (world);
+    }
+  else
+    {
+      g_message (
+        "%s: loading all...", __func__);
+      lilv_world_load_all (world);
+    }
+}
+
+static void
+init_symap (
+  PluginManager * self)
+{
   /* symap URIDs */
 #define SYMAP_MAP(target,uri) \
   self->urids.target = \
@@ -496,10 +469,83 @@ plugin_manager_init (PluginManager * self)
   SYMAP_MAP (time_speed, LV2_TIME__speed);
   SYMAP_MAP (ui_updateRate, LV2_UI__updateRate);
 #undef SYMAP_MAP
+}
 
-  /* load cached VST plugins */
+static void
+load_bundled_lv2_plugins (
+  PluginManager * self)
+{
+#ifndef _WOE32
+  GError * err;
+  const char * path =
+    CONFIGURE_LIBDIR "/zrythm/lv2";
+  if (g_file_test (
+        path,
+        G_FILE_TEST_EXISTS | G_FILE_TEST_IS_DIR))
+    {
+      GDir * bundle_lv2_dir =
+        g_dir_open (path, 0, &err);
+      if (bundle_lv2_dir)
+        {
+          const char * dir;
+          char * str;
+          while ((dir = g_dir_read_name (bundle_lv2_dir)))
+            {
+              str =
+                g_strdup_printf (
+                  "file://%s%s%s%smanifest.ttl",
+                  path,
+                  G_DIR_SEPARATOR_S,
+                  dir,
+                  G_DIR_SEPARATOR_S);
+              LilvNode * uri =
+                lilv_new_uri (
+                  self->lv2_nodes.lilv_world, str);
+              lilv_world_load_bundle (
+                self->lv2_nodes.lilv_world, uri);
+              g_message ("Loaded bundled plugin at %s",
+                         str);
+              g_free (str);
+              lilv_node_free (uri);
+            }
+        }
+      else
+        {
+          char * msg =
+            g_strdup_printf ("%s%s",
+            _("Error loading LV2 bundle dir: "),
+            err->message);
+          if (ZRYTHM_HAVE_UI)
+            {
+              ui_show_error_message (
+                MAIN_WINDOW ? MAIN_WINDOW : NULL,
+                msg);
+            }
+          g_free (msg);
+        }
+    }
+#endif
+}
+
+PluginManager *
+plugin_manager_new (void)
+{
+  PluginManager * self = object_new (PluginManager);
+
+  self->symap = symap_new();
+  zix_sem_init(&self->symap_lock, 1);
+
+  /* init lv2 */
+  create_and_load_lilv_word (self);
+  cache_lv2_uris (self);
+  init_symap (self);
+  load_bundled_lv2_plugins (self);
+
+  /* init vst */
   self->cached_vst_descriptors =
     cached_vst_descriptors_new ();
+
+  return self;
 }
 
 #ifdef HAVE_CARLA
@@ -507,6 +553,8 @@ static char **
 get_vst_paths (
   PluginManager * self)
 {
+  g_message ("%s: getting paths...", __func__);
+
 #ifdef _WOE32
   char ** paths =
     g_settings_get_strv (
@@ -558,6 +606,8 @@ get_vst_paths (
     g_strsplit (vst_path, PATH_SPLIT, 0);
   g_free (vst_path);
 #endif // __APPLE__
+
+  g_message ("%s: done", __func__);
 
   return paths;
 }
@@ -692,7 +742,9 @@ plugin_manager_scan_plugins (
   const double    max_progress,
   double *        progress)
 {
-  g_message ("scanning plugins...");
+  g_return_if_fail (self);
+
+  g_message ("%s: Scanning...", __func__);
 
   double start_progress =
     progress ? *progress : 0;
@@ -720,7 +772,8 @@ plugin_manager_scan_plugins (
 #endif
 
   /* scan LV2 */
-  g_message ("Scanning LV2 plugins...");
+  g_message (
+    "%s: Scanning LV2 plugins...", __func__);
   unsigned int count = 0;
   LILV_FOREACH (plugins, i, lilv_plugins)
     {
@@ -733,8 +786,7 @@ plugin_manager_scan_plugins (
       if (descriptor)
         {
           self->plugin_descriptors[
-            self->num_plugins++] =
-              descriptor;
+            self->num_plugins++] = descriptor;
           add_category (
             self, descriptor->category_str);
         }
@@ -766,11 +818,12 @@ plugin_manager_scan_plugins (
                 _("Skipped LV2 plugin at %s"),
                 uri_str);
             }
-          zrythm_set_progress_status (
-            ZRYTHM, prog_str, *progress);
+          zrythm_app_set_progress_status (
+            zrythm_app, prog_str, *progress);
         }
     }
-  g_message ("Scanned %d LV2 plugins", count);
+  g_message (
+    "%s: Scanned %d LV2 plugins", __func__, count);
 
 #ifdef HAVE_CARLA
   /* scan vst */
@@ -893,8 +946,8 @@ plugin_manager_scan_plugins (
                     _("Skipped VST plugin at %s"),
                     plugin_path);
                 }
-              zrythm_set_progress_status (
-                ZRYTHM, prog_str, *progress);
+              zrythm_app_set_progress_status (
+                zrythm_app, prog_str, *progress);
             }
         }
       if (plugin_idx > 0)
@@ -1019,8 +1072,8 @@ plugin_manager_scan_plugins (
                     _("Skipped VST plugin at %s"),
                     plugin_path);
                 }
-              zrythm_set_progress_status (
-                ZRYTHM, prog_str, *progress);
+              zrythm_app_set_progress_status (
+                zrythm_app, prog_str, *progress);
             }
         }
       if (plugin_idx > 0)
@@ -1081,8 +1134,8 @@ plugin_manager_scan_plugins (
                 _("Skipped AU plugin at %u"),
                 i);
             }
-          zrythm_set_progress_status (
-            ZRYTHM, prog_str, *progress);
+          zrythm_app_set_progress_status (
+            zrythm_app, prog_str, *progress);
         }
     }
 #endif // __APPLE__
@@ -1096,6 +1149,7 @@ plugin_manager_scan_plugins (
       g_message (
         "Scanning %s instruments...", type);
       paths = get_sf_paths (self, i);
+      g_return_if_fail (paths);
       path_idx = 0;
       while ((path = paths[path_idx++]) != NULL)
         {
@@ -1129,6 +1183,14 @@ plugin_manager_scan_plugins (
                   ins_path);
               char * parent_path =
                 io_path_get_parent_dir (ins_path);
+              if (!parent_path)
+                {
+                  g_warning (
+                    "Failed to get parent dir of "
+                    "%s", ins_path);
+                  plugin_descriptor_free (descr);
+                  continue;
+                }
               descr->author =
                 g_path_get_basename (parent_path);
               g_free (parent_path);
@@ -1138,6 +1200,9 @@ plugin_manager_scan_plugins (
               descr->protocol =
                 i == 0 ? PROT_SFZ : PROT_SF2;
               descr->open_with_carla = true;
+              descr->bridge_mode =
+                z_carla_discovery_get_bridge_mode (
+                  descr);
 
               array_append (
                 self->plugin_descriptors,
@@ -1153,8 +1218,9 @@ plugin_manager_scan_plugins (
                     "Scanned %s instrument: %s",
                     type,
                     descr->name);
-                  zrythm_set_progress_status (
-                    ZRYTHM, prog_str, *progress);
+                  zrythm_app_set_progress_status (
+                    zrythm_app, prog_str,
+                    *progress);
                 }
             }
           g_strfreev (sf_instruments);
@@ -1174,16 +1240,46 @@ plugin_manager_scan_plugins (
          sizeof (char *),
          sort_category_func);
 
-  g_message ("%d Plugins scanned.",
-             self->num_plugins);
+  g_message (
+    "%s: %d Plugins scanned.",
+    __func__, self->num_plugins);
 
   /*print_plugins ();*/
+}
+
+const PluginDescriptor *
+plugin_manager_find_plugin_from_uri (
+  PluginManager * self,
+  const char *    uri)
+{
+  for (int i = 0; i < self->num_plugins; i++)
+    {
+      PluginDescriptor * descr =
+        self->plugin_descriptors[i];
+      if (string_is_equal (uri, descr->uri, false))
+        {
+          return descr;
+        }
+    }
+
+  return NULL;
 }
 
 void
 plugin_manager_free (
   PluginManager * self)
 {
+  g_message ("%s: Freeing...", __func__);
+
   symap_free (self->symap);
   zix_sem_destroy (&self->symap_lock);
+  lilv_world_free (self->lv2_nodes.lilv_world);
+
+  object_free_w_func_and_null (
+    cached_vst_descriptors_free,
+    self->cached_vst_descriptors);
+
+  object_zero_and_free (self);
+
+  g_message ("%s: done", __func__);
 }

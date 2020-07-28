@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2019-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -26,11 +26,16 @@
 #ifndef __GUI_BACKEND_CLIP_EDITOR_H__
 #define __GUI_BACKEND_CLIP_EDITOR_H__
 
+#include <stdbool.h>
+
 #include "audio/region_identifier.h"
 #include "gui/backend/audio_clip_editor.h"
 #include "gui/backend/automation_editor.h"
 #include "gui/backend/chord_editor.h"
 #include "gui/backend/piano_roll.h"
+
+typedef struct ZRegion ZRegion;
+typedef struct ArrangerSelections ArrangerSelections;
 
 /**
  * @addtogroup gui_backend
@@ -38,9 +43,7 @@
  * @{
  */
 
-#define CLIP_EDITOR (&PROJECT->clip_editor)
-
-typedef struct ZRegion ZRegion;
+#define CLIP_EDITOR (PROJECT->clip_editor)
 
 /**
  * Clip editor serializable backend.
@@ -86,20 +89,16 @@ typedef struct ClipEditor
 static const cyaml_schema_field_t
 clip_editor_fields_schema[] =
 {
-  CYAML_FIELD_MAPPING (
-    "region_id", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     ClipEditor, region_id,
     region_identifier_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "piano_roll", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     ClipEditor, piano_roll,
     piano_roll_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "automation_editor", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     ClipEditor, automation_editor,
     automation_editor_fields_schema),
-  CYAML_FIELD_MAPPING (
-    "chord_editor", CYAML_FLAG_DEFAULT,
+  YAML_FIELD_MAPPING_EMBEDDED (
     ClipEditor, chord_editor,
     chord_editor_fields_schema),
 
@@ -121,9 +120,18 @@ void
 clip_editor_init_loaded (
   ClipEditor * self);
 
+/**
+ * Inits the clip editor.
+ */
 void
 clip_editor_init (
   ClipEditor * self);
+
+/**
+ * Creates a new clip editor.
+ */
+ClipEditor *
+clip_editor_new (void);
 
 /**
  * Sets the track and refreshes the piano roll widgets.
@@ -133,10 +141,15 @@ clip_editor_init (
 void
 clip_editor_set_region (
   ClipEditor * self,
-  ZRegion *     region);
+  ZRegion *    region,
+  bool         fire_events);
 
 ZRegion *
 clip_editor_get_region (
+  ClipEditor * self);
+
+ArrangerSelections *
+clip_editor_get_arranger_selections (
   ClipEditor * self);
 
 #if 0
@@ -159,6 +172,10 @@ clip_editor_get_track (
  */
 void
 clip_editor_redraw_region (
+  ClipEditor * self);
+
+void
+clip_editor_free (
   ClipEditor * self);
 
 /**

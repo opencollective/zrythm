@@ -37,6 +37,8 @@
 
 #include "audio/engine.h"
 #include "audio/track.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/instrument_track.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/lv2_plugin.h"
@@ -46,9 +48,11 @@
 #include "plugins/plugin_gtk.h"
 #include "plugins/plugin_manager.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/lilv.h"
 #include "utils/math.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -94,6 +98,9 @@ void
 lv2_gtk_on_save_activate (
   Lv2Plugin * plugin)
 {
+  return;
+
+# if 0
   GtkWidget* dialog = gtk_file_chooser_dialog_new(
     _("Save State"),
     plugin->plugin->window,
@@ -109,12 +116,13 @@ lv2_gtk_on_save_activate (
         GTK_FILE_CHOOSER(dialog));
     char* base =
       g_build_filename (path, "/", NULL);
-    lv2_state_save (plugin, base);
-    g_free(path);
-    g_free(base);
+    lv2_state_save_to_file (plugin, base);
+    g_free (path);
+    g_free (base);
   }
 
   gtk_widget_destroy(dialog);
+#endif
 }
 
 static char*
@@ -708,8 +716,7 @@ lv2_gtk_ui_port_event (
   else if (protocol !=
            PM_URIDS.atom_eventTransfer)
     {
-      g_warning (
-        "Unknown port event protocol");
+      g_warning ("Unknown port event protocol");
       return;
     }
 
@@ -1498,6 +1505,9 @@ lv2_gtk_open_ui (
     "plugin window shown, adding idle timeout. "
     "Update frequency (Hz): %.01f",
     (double) plugin->plugin->ui_update_hz);
+  g_return_val_if_fail (
+    plugin->plugin->ui_update_hz >=
+      PLUGIN_MIN_REFRESH_RATE, -1);
 
   g_timeout_add (
     (int) (1000.f / plugin->plugin->ui_update_hz),

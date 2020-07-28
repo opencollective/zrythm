@@ -30,10 +30,98 @@
 #include "actions/move_plugins_action.h"
 #include "actions/move_tracks_action.h"
 #include "actions/undoable_action.h"
+#include "actions/transport_action.h"
 #include "project.h"
+#include "zrythm_app.h"
 
 #include <glib.h>
 #include <glib/gi18n.h>
+
+void
+undoable_action_init_loaded (
+  UndoableAction * self)
+{
+  /* uppercase, camel case, snake case */
+#define INIT_LOADED(uc,sc,cc) \
+  case UA_##uc: \
+    sc##_action_init_loaded ((cc##Action *) self); \
+    break;
+
+  switch (self->type)
+    {
+    /*INIT_LOADED (CREATE_TRACKS,*/
+               /*create_tracks,*/
+               /*CreateTracks);*/
+    INIT_LOADED (MOVE_TRACKS,
+               move_tracks,
+               MoveTracks);
+    INIT_LOADED (EDIT_TRACKS,
+               edit_tracks,
+               EditTracks);
+    INIT_LOADED (COPY_TRACKS,
+               copy_tracks,
+               CopyTracks);
+    INIT_LOADED (DELETE_TRACKS,
+               delete_tracks,
+               DeleteTracks);
+    INIT_LOADED (CHANNEL_SEND,
+               channel_send,
+               ChannelSend);
+    /*INIT_LOADED (CREATE_PLUGINS,*/
+               /*create_plugins,*/
+               /*CreatePlugins);*/
+    INIT_LOADED (MOVE_PLUGINS,
+               move_plugins,
+               MovePlugins);
+    INIT_LOADED (EDIT_PLUGINS,
+               edit_plugins,
+               EditPlugins);
+    INIT_LOADED (COPY_PLUGINS,
+               copy_plugins,
+               CopyPlugins);
+    INIT_LOADED (DELETE_PLUGINS,
+               delete_plugins,
+               DeletePlugins);
+    INIT_LOADED (CREATE_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (MOVE_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (LINK_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (RECORD_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (EDIT_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (RESIZE_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (DUPLICATE_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (DELETE_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (QUANTIZE_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (SPLIT_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    INIT_LOADED (
+      PORT_CONNECTION, port_connection,
+      PortConnection);
+    /*INIT_LOADED (TRANSPORT, transport, Transport);*/
+    default:
+      break;
+    }
+
+#undef INIT_LOADED
+}
 
 /**
  * Performs the action.
@@ -52,8 +140,15 @@ undoable_action_do (UndoableAction * self)
   /* uppercase, camel case, snake case */
 #define DO_ACTION(uc,sc,cc) \
   case UA_##uc: \
-    g_message ("[DOING ACTION]: " #uc); \
-    ret = sc##_action_do ((cc##Action *) self); \
+    { \
+      char * str = \
+        undoable_action_stringize (self); \
+      g_message ( \
+        "[DOING ACTION]: " #uc " (%s)", str); \
+      g_free (str); \
+      ret = sc##_action_do ((cc##Action *) self); \
+      g_message ("[DONE]: " #uc); \
+    } \
     break;
 
   switch (self->type)
@@ -73,6 +168,9 @@ undoable_action_do (UndoableAction * self)
     DO_ACTION (DELETE_TRACKS,
                delete_tracks,
                DeleteTracks);
+    DO_ACTION (CHANNEL_SEND,
+               channel_send,
+               ChannelSend);
     DO_ACTION (CREATE_PLUGINS,
                create_plugins,
                CreatePlugins);
@@ -118,6 +216,10 @@ undoable_action_do (UndoableAction * self)
     DO_ACTION (SPLIT_ARRANGER_SELECTIONS,
                arranger_selections,
                ArrangerSelections);
+    DO_ACTION (TRANSPORT, transport, Transport);
+    DO_ACTION (
+      PORT_CONNECTION, port_connection,
+      PortConnection);
     default:
       g_warn_if_reached ();
       ret = -1;
@@ -145,8 +247,16 @@ undoable_action_undo (UndoableAction * self)
 /* uppercase, camel case, snake case */
 #define UNDO_ACTION(uc,sc,cc) \
   case UA_##uc: \
-    g_message ("[UNDOING ACTION]: " #uc); \
-    ret = sc##_action_undo ((cc##Action *) self); \
+    { \
+      char * str = \
+        undoable_action_stringize (self); \
+      g_message ( \
+        "[UNDOING ACTION]: " #uc " (%s)", str); \
+      g_free (str); \
+      ret = \
+        sc##_action_undo ((cc##Action *) self); \
+      g_message ("[UNDONE]: " #uc); \
+    } \
     break;
 
   switch (self->type)
@@ -166,6 +276,9 @@ undoable_action_undo (UndoableAction * self)
     UNDO_ACTION (DELETE_TRACKS,
                delete_tracks,
                DeleteTracks);
+    UNDO_ACTION (CHANNEL_SEND,
+               channel_send,
+               ChannelSend);
     UNDO_ACTION (CREATE_PLUGINS,
                create_plugins,
                CreatePlugins);
@@ -211,6 +324,10 @@ undoable_action_undo (UndoableAction * self)
     UNDO_ACTION (SPLIT_ARRANGER_SELECTIONS,
                arranger_selections,
                ArrangerSelections);
+    UNDO_ACTION (
+      PORT_CONNECTION, port_connection,
+      PortConnection);
+    UNDO_ACTION (TRANSPORT, transport, Transport);
     default:
       g_warn_if_reached ();
       ret = -1;
@@ -249,6 +366,9 @@ undoable_action_free (UndoableAction * self)
     FREE_ACTION (DELETE_TRACKS,
                delete_tracks,
                DeleteTracks);
+    FREE_ACTION (CHANNEL_SEND,
+               channel_send,
+               ChannelSend);
     FREE_ACTION (CREATE_PLUGINS,
                create_plugins,
                CreatePlugins);
@@ -291,6 +411,13 @@ undoable_action_free (UndoableAction * self)
     FREE_ACTION (SPLIT_ARRANGER_SELECTIONS,
                arranger_selections,
                ArrangerSelections);
+    FREE_ACTION (RECORD_ARRANGER_SELECTIONS,
+               arranger_selections,
+               ArrangerSelections);
+    FREE_ACTION (
+      PORT_CONNECTION, port_connection,
+      PortConnection);
+    FREE_ACTION (TRANSPORT, transport, Transport);
     default:
       g_warn_if_reached ();
       break;
@@ -331,6 +458,9 @@ undoable_action_stringize (
     STRINGIZE_UA (DELETE_TRACKS,
                   DeleteTracks,
                   delete_tracks);
+    STRINGIZE_UA (CHANNEL_SEND,
+               ChannelSend,
+               channel_send);
     STRINGIZE_UA (CREATE_PLUGINS,
                   CreatePlugins,
                   create_plugins);
@@ -376,6 +506,10 @@ undoable_action_stringize (
     STRINGIZE_UA (SPLIT_ARRANGER_SELECTIONS,
                ArrangerSelections,
                arranger_selections);
+    STRINGIZE_UA (
+      PORT_CONNECTION, PortConnection, port_connection);
+    STRINGIZE_UA (
+      TRANSPORT, Transport, transport);
     default:
       g_return_val_if_reached (
         g_strdup (""));

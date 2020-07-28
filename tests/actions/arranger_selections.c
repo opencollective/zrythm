@@ -17,6 +17,8 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-test-config.h"
+
 #include "actions/arranger_selections.h"
 #include "actions/undoable_action.h"
 #include "audio/audio_region.h"
@@ -201,7 +203,7 @@ static void
 test_create_timeline ()
 {
   /* clear undo/redo stacks */
-  undo_manager_clear_stacks (UNDO_MANAGER);
+  undo_manager_clear_stacks (UNDO_MANAGER, true);
 
   /* do create */
   UndoableAction * ua =
@@ -239,7 +241,7 @@ static void
 test_delete_timeline ()
 {
   /* clear undo/redo stacks */
-  undo_manager_clear_stacks (UNDO_MANAGER);
+  undo_manager_clear_stacks (UNDO_MANAGER, true);
 
   /* do delete */
   UndoableAction * ua =
@@ -492,7 +494,7 @@ static void
 test_move_timeline ()
 {
   /* clear undo/redo stacks */
-  undo_manager_clear_stacks (UNDO_MANAGER);
+  undo_manager_clear_stacks (UNDO_MANAGER, true);
 
   /* when i == 1 we are moving to new tracks */
   for (int i = 0; i < 2; i++)
@@ -878,7 +880,7 @@ static void
 test_duplicate_timeline ()
 {
   /* clear undo/redo stacks */
-  undo_manager_clear_stacks (UNDO_MANAGER);
+  undo_manager_clear_stacks (UNDO_MANAGER, true);
 
   /* when i == 1 we are moving to new tracks */
   for (int i = 0; i < 2; i++)
@@ -946,7 +948,7 @@ static void
 test_link_timeline ()
 {
   /* clear undo/redo stacks */
-  undo_manager_clear_stacks (UNDO_MANAGER);
+  undo_manager_clear_stacks (UNDO_MANAGER, true);
 
   /* when i == 1 we are moving to new tracks */
   for (int i = 0; i < 2; i++)

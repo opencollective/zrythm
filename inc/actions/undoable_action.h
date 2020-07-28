@@ -39,17 +39,18 @@
  */
 typedef enum UndoableActionType
 {
-  /* --------- Track/Channel ---------- */
+  /* ---- Track/Channel ---- */
   UA_CREATE_TRACKS,
   UA_MOVE_TRACKS,
   /** Edit track/channel parameters. */
   UA_EDIT_TRACKS,
   UA_COPY_TRACKS,
   UA_DELETE_TRACKS,
+  UA_CHANNEL_SEND,
 
-  /* ---------------- end ----------------- */
+  /* ---- end ---- */
 
-  /* ---------------- Plugin --------------- */
+  /* ---- Plugin ---- */
 
   UA_CREATE_PLUGINS,
   UA_MOVE_PLUGINS,
@@ -57,9 +58,9 @@ typedef enum UndoableActionType
   UA_COPY_PLUGINS,
   UA_DELETE_PLUGINS,
 
-  /* ---------------- end ----------------- */
+  /* ---- end ---- */
 
-  /* --------- ARRANGER SELECTIONS ---------- */
+  /* ---- ARRANGER SELECTIONS ---- */
 
   UA_CREATE_ARRANGER_SELECTIONS,
   UA_MOVE_ARRANGER_SELECTIONS,
@@ -72,7 +73,15 @@ typedef enum UndoableActionType
   UA_DELETE_ARRANGER_SELECTIONS,
   UA_QUANTIZE_ARRANGER_SELECTIONS,
 
-  /* ---------------- end ----------------- */
+  /* ---- end ---- */
+
+  /* ---- port connection ---- */
+
+  UA_PORT_CONNECTION,
+
+  /* ---- end ---- */
+
+  UA_TRANSPORT,
 
 } UndoableActionType;
 
@@ -89,6 +98,8 @@ undoable_action_type_strings[] =
     UA_COPY_TRACKS },
   { "Delete tracks",
     UA_DELETE_TRACKS },
+  { "Channel send",
+    UA_CHANNEL_SEND },
   { "Create plugins",
     UA_CREATE_PLUGINS },
   { "Move plugins",
@@ -119,6 +130,8 @@ undoable_action_type_strings[] =
     UA_DELETE_ARRANGER_SELECTIONS },
   { "Quantize arranger selections",
     UA_QUANTIZE_ARRANGER_SELECTIONS },
+  { "Port connection", UA_PORT_CONNECTION },
+  { "Transport", UA_TRANSPORT },
 };
 
 typedef struct UndoableAction
@@ -153,6 +166,10 @@ static const cyaml_schema_value_t
   CYAML_VALUE_MAPPING (CYAML_FLAG_POINTER,
     UndoableAction, undoable_action_fields_schema),
 };
+
+void
+undoable_action_init_loaded (
+  UndoableAction * self);
 
 /**
  * Performs the action.

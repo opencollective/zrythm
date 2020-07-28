@@ -17,6 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <math.h>
 #include <stdlib.h>
 
 #include "audio/scale_object.h"
@@ -25,6 +26,7 @@
 #include "gui/backend/arranger_object.h"
 #include "project.h"
 #include "utils/flags.h"
+#include "utils/objects.h"
 
 /**
  * Creates a ScaleObject.
@@ -34,8 +36,9 @@ scale_object_new (
   MusicalScale * descr,
   int               is_main)
 {
-  ScaleObject * self =
-    calloc (1, sizeof (ScaleObject));
+  ScaleObject * self = object_new (ScaleObject);
+
+  self->magic = SCALE_OBJECT_MAGIC;
 
   ArrangerObject * obj =
     (ArrangerObject *) self;
@@ -58,6 +61,7 @@ scale_object_is_equal (
   ArrangerObject * obj_b =
     (ArrangerObject *) b;
   return
-    position_is_equal (&obj_a->pos, &obj_b->pos) &&
+    position_is_equal_ticks (
+      &obj_a->pos, &obj_b->pos) &&
     musical_scale_is_equal (a->scale, b->scale);
 }

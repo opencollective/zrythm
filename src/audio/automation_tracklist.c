@@ -19,16 +19,19 @@
 
 #include <stdlib.h>
 
-#include "audio/automatable.h"
 #include "audio/automation_track.h"
 #include "audio/automation_tracklist.h"
 #include "audio/channel.h"
 #include "audio/track.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "plugins/plugin.h"
 #include "project.h"
 #include "utils/arrays.h"
 #include "utils/flags.h"
+#include "utils/object_utils.h"
 #include "utils/objects.h"
+#include "zrythm_app.h"
 
 /**
  * Inits a loaded AutomationTracklist.
@@ -151,144 +154,6 @@ automation_tracklist_init (
   /*fader_at->visible = 1;*/
 }
 
-/*void*/
-/*automation_tracklist_update (*/
-  /*AutomationTracklist * self)*/
-/*{*/
-  /*Channel * channel =*/
-    /*track_get_channel (self->track);*/
-
-  /*[> generate channel automatables if necessary <]*/
-  /*if (!channel_get_automatable (*/
-        /*channel,*/
-        /*AUTOMATABLE_TYPE_CHANNEL_FADER))*/
-    /*{*/
-      /*AutomationTrack * at =*/
-        /*automation_track_new (*/
-          /*automatable_create_fader (channel));*/
-      /*automation_tracklist_add_at (*/
-        /*atl, at);*/
-    /*}*/
-  /*if (!channel_get_automatable (*/
-        /*channel,*/
-        /*AUTOMATABLE_TYPE_CHANNEL_PAN))*/
-    /*{*/
-      /*AutomationTrack * at =*/
-        /*automation_track_new (*/
-          /*automatable_create_pan (channel));*/
-      /*automation_tracklist_add_at (*/
-        /*atl, at);*/
-    /*}*/
-  /*if (!channel_get_automatable (*/
-        /*channel,*/
-        /*AUTOMATABLE_TYPE_CHANNEL_MUTE))*/
-    /*{*/
-      /*AutomationTrack * at =*/
-        /*automation_track_new (*/
-          /*automatable_create_mute (channel));*/
-      /*automation_tracklist_add_at (*/
-        /*atl, at);*/
-    /*}*/
-
-  /*[> remove unneeded automation tracks <]*/
-  /*AutomationTrack * at, * _at;*/
-  /*Automatable * _a;*/
-  /*int match, i, j;*/
-  /*for (i = 0; i < self->num_ats; i++)*/
-    /*{*/
-      /*at = self->ats[i];*/
-      /*match = 0;*/
-      /*for (j = 0; j < channel->num_automatables; j++)*/
-        /*{*/
-          /*_a = channel->automatables[j];*/
-          /*_at =*/
-            /*automatable_get_automation_track (_a);*/
-          /*if (_at == at)*/
-            /*{*/
-              /*match = 1;*/
-              /*break;*/
-            /*}*/
-        /*}*/
-
-      /*if (match)*/
-        /*continue;*/
-
-      /*for (j = 0; j < STRIP_SIZE; j++)*/
-        /*{*/
-          /*Channel * channel =*/
-            /*track_get_channel (self->track);*/
-          /*Plugin * plugin = channel->plugins[j];*/
-          /*if (plugin)*/
-            /*{*/
-              /*for (int k = 0; k < plugin->num_automatables; k++)*/
-                /*{*/
-                  /*Automatable * _a = plugin->automatables[k];*/
-                  /*AutomationTrack * _at =*/
-                    /*automatable_get_automation_track (_a);*/
-                  /*if (_at == at)*/
-                    /*{*/
-                      /*match = 1;*/
-                      /*break;*/
-                    /*}*/
-                /*}*/
-            /*}*/
-          /*if (match)*/
-            /*break;*/
-        /*}*/
-
-      /*if (match)*/
-        /*{*/
-          /*continue;*/
-        /*}*/
-      /*else  this automation track doesn't belong anymore.*/
-              /*delete it */
-        /*{*/
-          /*automation_tracklist_delete_at (*/
-            /*self, at, F_FREE);*/
-          /*i--;*/
-        /*}*/
-    /*}*/
-
-  /* create and add automation tracks for channel
-   * automatables that don't have automation tracks */
-  /*for (int i = 0; i < channel->num_automatables; i++)*/
-    /*{*/
-      /*Automatable * a = channel->automatables[i];*/
-      /*AutomationTrack * at =*/
-        /*automatable_get_automation_track (a);*/
-      /*g_message ("at %p", at);*/
-      /*if (!at)*/
-        /*{*/
-          /*at = automation_track_new (a);*/
-          /*automation_tracklist_add_at (*/
-            /*self, at);*/
-        /*}*/
-    /*}*/
-
-  /*[> same for plugin automatables <]*/
-  /*for (int j = 0; j < STRIP_SIZE; j++)*/
-    /*{*/
-      /*Channel * channel =*/
-        /*track_get_channel (self->track);*/
-      /*Plugin * plugin = channel->plugins[j];*/
-      /*if (plugin)*/
-        /*{*/
-          /*for (int i = 0; i < plugin->num_automatables; i++)*/
-            /*{*/
-              /*Automatable * a = plugin->automatables[i];*/
-              /*AutomationTrack * at =*/
-                /*automatable_get_automation_track (a);*/
-              /*if (!at)*/
-                /*{*/
-                  /*at = automation_track_new (a);*/
-                  /*automation_tracklist_add_at (*/
-                    /*self, at);*/
-                /*}*/
-            /*}*/
-        /*}*/
-    /*}*/
-/*}*/
-
 /**
  * Sets the index of the AutomationTrack and swaps
  * it with the AutomationTrack at that index or
@@ -378,11 +243,37 @@ automation_tracklist_update_track_pos (
   AutomationTracklist * self,
   Track *               track)
 {
-  int i;
-  for (i = 0; i < self->num_ats; i++)
+  self->track_pos = track->pos;
+  for (int i = 0; i < self->num_ats; i++)
     {
-      self->ats[i]->port_id.track_pos =
-        track->pos;
+      AutomationTrack * at = self->ats[i];
+      at->port_id.track_pos = track->pos;
+      if (at->port_id.owner_type ==
+            PORT_OWNER_TYPE_PLUGIN)
+        {
+          at->port_id.plugin_id.track_pos =
+            track->pos;
+        }
+      for (int j = 0; j < at->num_regions; j++)
+        {
+          ZRegion * region = at->regions[j];
+          region->id.track_pos = track->pos;
+          region_update_identifier (region);
+        }
+    }
+}
+
+/**
+ * Unselects all arranger objects.
+ */
+void
+automation_tracklist_unselect_all (
+  AutomationTracklist * self)
+{
+  for (int i = self->num_ats - 1; i >= 0; i--)
+    {
+      AutomationTrack * at = self->ats[i];
+      automation_track_unselect_all (at);
     }
 }
 
@@ -420,8 +311,7 @@ automation_tracklist_clone (
     {
       src_at = src->ats[i];
       dest->ats[i] =
-        automation_track_clone (
-          src_at);
+        automation_track_clone (src_at);
     }
 
   /* TODO create same automation lanes */
@@ -546,7 +436,8 @@ void
 automation_tracklist_remove_at (
   AutomationTracklist * self,
   AutomationTrack *     at,
-  int                   free)
+  bool                  free,
+  bool                  fire_events)
 {
   automation_track_clear (at);
 
@@ -569,7 +460,7 @@ automation_tracklist_remove_at (
             first_invisible_at->created = 1;
           first_invisible_at->visible = 1;
 
-          if (ZRYTHM_HAVE_UI)
+          if (fire_events)
             {
               EVENTS_PUSH (
                 ET_AUTOMATION_TRACK_ADDED,
@@ -581,8 +472,11 @@ automation_tracklist_remove_at (
   if (free)
     free_later (at, automation_track_free);
 
-  EVENTS_PUSH (
-    ET_AUTOMATION_TRACKLIST_AT_REMOVED, self)
+  if (fire_events)
+    {
+      EVENTS_PUSH (
+        ET_AUTOMATION_TRACKLIST_AT_REMOVED, self);
+    }
 }
 
 /**
@@ -607,33 +501,71 @@ automation_tracklist_get_num_visible (
   return count;
 }
 
-/*static void*/
-/*remove_automation_track (*/
-  /*AutomationTracklist * self,*/
-  /*AutomationTrack *     at)*/
-/*{*/
-  /*array_double_delete (*/
-    /*self->automation_tracks,*/
-    /*self->at_ids,*/
-    /*self->num_automation_tracks,*/
-    /*at, at->id);*/
-  /*project_remove_automation_track (at);*/
-  /*automation_track_free (at);*/
-/*}*/
-
-/*static void*/
-/*remove_automation_lane (*/
-  /*AutomationTracklist * self,*/
-  /*AutomationLane *     al)*/
-/*{*/
-  /*array_double_delete (*/
-    /*self->automation_lanes,*/
-    /*self->al_ids,*/
-    /*self->num_automation_lanes,*/
-    /*al, al->id);*/
-  /*project_remove_automation_lane (al);*/
-  /*automation_lane_free (al);*/
-/*}*/
+/**
+ * Verifies the identifiers on a live automation
+ * tracklist (in the project, not a clone).
+ *
+ * @return True if pass.
+ */
+bool
+automation_tracklist_verify_identifiers (
+  AutomationTracklist * self)
+{
+  int track_pos = self->track_pos;
+  for (int i = 0; i < self->num_ats; i++)
+    {
+      AutomationTrack * at = self->ats[i];
+      g_assert_cmpint (
+        at->port_id.track_pos, ==, track_pos);
+      if (at->port_id.owner_type ==
+            PORT_OWNER_TYPE_PLUGIN)
+        {
+          g_return_val_if_fail (
+            at->port_id.plugin_id.track_pos ==
+              track_pos, false);
+        }
+      g_return_val_if_fail (
+        automation_track_find_from_port_id (
+          &at->port_id, false) == at, false);
+      for (int j = 0; j < at->num_regions; j++)
+        {
+          ZRegion * r = at->regions[j];
+          g_return_val_if_fail (
+            r->id.track_pos == track_pos &&
+            r->id.at_idx == at->index &&
+            r->id.idx ==j, false);
+          for (int k = 0; k < r->num_aps; k++)
+            {
+              AutomationPoint * ap = r->aps[k];
+              ArrangerObject * obj =
+                (ArrangerObject *) ap;
+              g_return_val_if_fail (
+                obj->region_id.track_pos ==
+                  track_pos, false);
+            }
+          for (int k = 0; k < r->num_midi_notes; k++)
+            {
+              MidiNote * mn = r->midi_notes[k];
+              ArrangerObject * obj =
+                (ArrangerObject *) mn;
+              g_return_val_if_fail (
+                obj->region_id.track_pos ==
+                  track_pos, false);
+            }
+          for (int k = 0; k < r->num_chord_objects;
+               k++)
+            {
+              ChordObject * co = r->chord_objects[k];
+              ArrangerObject * obj =
+                (ArrangerObject *) co;
+              g_return_val_if_fail (
+                obj->region_id.track_pos ==
+                  track_pos, false);
+            }
+        }
+    }
+  return true;
+}
 
 void
 automation_tracklist_free_members (

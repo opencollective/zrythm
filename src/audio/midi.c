@@ -35,16 +35,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <inttypes.h>
 #include <math.h>
 #include <stdlib.h>
 #include <signal.h>
 
 #include "audio/channel.h"
 #include "audio/engine.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/midi.h"
 #include "audio/transport.h"
 #include "project.h"
+#include "utils/objects.h"
 
 /**
  * Appends the events from src to dest
@@ -272,8 +274,7 @@ MidiEvents *
 midi_events_new (
   Port * port)
 {
-  MidiEvents * self =
-    calloc (1, sizeof(MidiEvents));
+  MidiEvents * self = object_new (MidiEvents);
 
   midi_events_init (self);
   self->port = port;
@@ -467,10 +468,17 @@ static int
 sort_events_func (
   const void * _a, const void * _b)
 {
-  MidiEvent * a =
-    *(MidiEvent * const *) _a;
-  MidiEvent * b =
-    *(MidiEvent * const *) _b;
+  MidiEvent * a = (MidiEvent *) _a;
+  MidiEvent * b = (MidiEvent *) _b;
+
+  /* if same time put note ons first */
+  if (a->time == b->time)
+    {
+      return
+        a->type == MIDI_EVENT_TYPE_NOTE_ON ?
+          -1 : 1;
+    }
+
   return (int) a->time - (int) b->time;
 }
 
@@ -481,10 +489,9 @@ void
 midi_events_sort_by_time (
   MidiEvents * self)
 {
-  qsort (self->events,
-         (size_t) self->num_events,
-         sizeof (MidiEvent),
-         sort_events_func);
+  qsort (
+    self->events, (size_t) self->num_events,
+    sizeof (MidiEvent), sort_events_func);
 }
 
 #ifdef HAVE_JACK
@@ -723,6 +730,11 @@ midi_events_add_note_on (
   uint32_t     time,
   int          queued)
 {
+  g_message (
+    "%s: ch %"PRIu8", pitch %"PRIu8", vel %"PRIu8
+    ", time %"PRIu32,
+    __func__, channel, note_pitch, velocity, time);
+
   MidiEvent * ev;
   if (queued)
     ev =
@@ -798,7 +810,16 @@ midi_events_add_event_from_buf (
   int           buf_size,
   int           queued)
 {
-  g_return_if_fail (buf_size == 3);
+  if (buf_size != 3)
+    {
+      g_warning (
+        "buf size of %d received (%"PRIu8" %"
+        PRIu8" %"PRIu8"), expected 3",
+        buf_size > 0 ? buf[0] : 0,
+        buf_size > 1 ? buf[1] : 0,
+        buf_size > 2 ? buf[2] : 0, buf_size);
+      return;
+    }
 
   midi_byte_t type = buf[0] & 0xf0;
   midi_byte_t channel =
@@ -974,7 +995,7 @@ midi_panic_all (
 
       if (track_has_piano_roll (track))
         midi_events_panic (
-          track->processor.piano_roll->midi_events,
+          track->processor->piano_roll->midi_events,
           queued);
     }
 }
@@ -1029,5 +1050,7 @@ void
 midi_events_free (
   MidiEvents * self)
 {
-  free (self);
+  zix_sem_destroy (&self->access_sem);
+
+  object_zero_and_free (self);
 }

@@ -26,7 +26,7 @@
 #ifndef __PLUGINS_PLUGIN_DESCRIPTOR_H__
 #define __PLUGINS_PLUGIN_DESCRIPTOR_H__
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <stdbool.h>
 
@@ -86,6 +86,51 @@ typedef enum ZPluginCategory
   PC_MIXER,
 } ZPluginCategory;
 
+static const cyaml_strval_t
+plugin_descriptor_category_strings[] =
+{
+  { "None", ZPLUGIN_CATEGORY_NONE },
+  { "Delay", PC_DELAY },
+  { "Reverb", PC_REVERB },
+  { "Distortion", PC_DISTORTION },
+  { "Waveshaper", PC_WAVESHAPER },
+  { "Dynamics", PC_DYNAMICS },
+  { "Amplifier", PC_AMPLIFIER },
+  { "Compressor", PC_COMPRESSOR },
+  { "Envelope", PC_ENVELOPE },
+  { "Expander", PC_EXPANDER },
+  { "Gate", PC_GATE },
+  { "Limiter", PC_LIMITER },
+  { "Filter", PC_FILTER },
+  { "Allpass Filter", PC_ALLPASS_FILTER  },
+  { "Bandpass Filter", PC_BANDPASS_FILTER },
+  { "Comb Filter", PC_COMB_FILTER },
+  { "EQ", PC_EQ },
+  { "Multi-EQ", PC_MULTI_EQ },
+  { "Parametric EQ", PC_PARA_EQ },
+  { "Highpass Filter", PC_HIGHPASS_FILTER },
+  { "Lowpass Filter", PC_LOWPASS_FILTER },
+  { "Generator", PC_GENERATOR },
+  { "Constant", PC_CONSTANT },
+  { "Instrument", PC_INSTRUMENT },
+  { "Oscillator", PC_OSCILLATOR },
+  { "MIDI", PC_MIDI },
+  { "Modulator", PC_MODULATOR },
+  { "Chorus", PC_CHORUS },
+  { "Flanger", PC_FLANGER },
+  { "Phaser", PC_PHASER },
+  { "Simulator", PC_SIMULATOR },
+  { "Simulator Reverb", PC_SIMULATOR_REVERB },
+  { "Spatial", PC_SPATIAL },
+  { "Spectral", PC_SPECTRAL },
+  { "Pitch", PC_PITCH },
+  { "Utility", PC_UTILITY },
+  { "Analyzer", PC_ANALYZER },
+  { "Converter", PC_CONVERTER },
+  { "Function", PC_FUNCTION },
+  { "Mixer", PC_MIXER },
+};
+
 /**
  * Plugin protocol.
  */
@@ -133,6 +178,24 @@ plugin_architecture_strings[] =
   { "64-bit",       ARCH_64     },
 };
 
+/**
+ * Carla bridge mode.
+ */
+typedef enum CarlaBridgeMode
+{
+  CARLA_BRIDGE_NONE,
+  CARLA_BRIDGE_UI,
+  CARLA_BRIDGE_FULL,
+} CarlaBridgeMode;
+
+static const cyaml_strval_t
+carla_bridge_mode_strings[] =
+{
+  { "None", CARLA_BRIDGE_NONE },
+  { "UI",   CARLA_BRIDGE_UI   },
+  { "Full", CARLA_BRIDGE_FULL },
+};
+
 /***
  * A descriptor to be implemented by all plugins
  * This will be used throughout the UI
@@ -164,29 +227,33 @@ typedef struct PluginDescriptor
   /** Number of output CV ports. */
   int              num_cv_outs;
   /** Architecture (32/64bit). */
-  PluginArchitecture   arch;
+  PluginArchitecture arch;
   /** Plugin protocol (Lv2/DSSI/LADSPA/VST...). */
-  PluginProtocol       protocol;
+  PluginProtocol   protocol;
   /** Path, if not an Lv2Plugin which uses URIs. */
-  char                 * path;
+  char *           path;
   /** Lv2Plugin URI. */
-  char                 * uri;
+  char *           uri;
+
   /** 1 if this plugin is to be instantiated
    * through Carla. */
-  bool              open_with_carla;
+  bool             open_with_carla;
+
+  /** Carla bridge mode. */
+  CarlaBridgeMode  bridge_mode;
 
   /** Whether the plugin needs to be bridged
    * through Carla (only used for LV2 plugins
    * having Gtk2 UIs). */
-  //bool              needs_bridging;
+  //bool           needs_bridging;
 
   /** Used for VST. */
-  int64_t              unique_id;
+  int64_t          unique_id;
 
   /** Hash of the plugin's bundle (.so/.ddl for VST)
    * used when caching PluginDescriptor's, obtained
    * using g_file_hash(). */
-  unsigned int         ghash;
+  unsigned int     ghash;
 } PluginDescriptor;
 
 static const cyaml_schema_field_t
@@ -207,6 +274,9 @@ plugin_descriptor_fields_schema[] =
     CYAML_FLAG_POINTER | CYAML_FLAG_OPTIONAL,
     PluginDescriptor, website,
      0, CYAML_UNLIMITED),
+  YAML_FIELD_ENUM (
+    PluginDescriptor, category,
+    plugin_descriptor_category_strings),
   CYAML_FIELD_STRING_PTR (
     "category_str",
     CYAML_FLAG_POINTER | CYAML_FLAG_OPTIONAL,
@@ -241,6 +311,11 @@ plugin_descriptor_fields_schema[] =
   YAML_FIELD_ENUM (
     PluginDescriptor, protocol,
     plugin_protocol_strings),
+#if 0
+  YAML_FIELD_ENUM (
+    PluginDescriptor, bridge_mode,
+    carla_bridge_mode_strings),
+#endif
   YAML_FIELD_STRING_PTR_OPTIONAL (
     PluginDescriptor, path),
   YAML_FIELD_STRING_PTR_OPTIONAL (
@@ -329,6 +404,14 @@ plugin_descriptor_is_valid_for_slot_type (
   PluginDescriptor * self,
   int                slot_type,
   int                track_type);
+
+/**
+ * Returns if the Plugin has a supported custom
+ * UI.
+ */
+bool
+plugin_descriptor_has_custom_ui (
+  PluginDescriptor * self);
 
 void
 plugin_descriptor_free (

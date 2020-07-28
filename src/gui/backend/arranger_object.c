@@ -24,9 +24,12 @@
 #include "audio/chord_track.h"
 #include "audio/marker_track.h"
 #include "audio/midi_region.h"
+#include "audio/stretcher.h"
 #include "gui/backend/arranger_object.h"
 #include "gui/backend/automation_selections.h"
 #include "gui/backend/chord_selections.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/timeline_selections.h"
 #include "gui/widgets/automation_arranger.h"
 #include "gui/widgets/automation_editor_space.h"
@@ -57,6 +60,7 @@
 #include "utils/flags.h"
 #include "utils/math.h"
 #include "utils/objects.h"
+#include "zrythm_app.h"
 
 #define TYPE(x) \
   ARRANGER_OBJECT_TYPE_##x
@@ -737,7 +741,22 @@ static void
 init_loaded_midi_note (
   MidiNote * self)
 {
+  self->magic = MIDI_NOTE_MAGIC;
   self->vel->midi_note = self;
+}
+
+static void
+init_loaded_scale_object (
+  ScaleObject * self)
+{
+  self->magic = SCALE_OBJECT_MAGIC;
+}
+
+static void
+init_loaded_chord_object (
+  ChordObject * self)
+{
+  self->magic = CHORD_OBJECT_MAGIC;
 }
 
 static void
@@ -753,20 +772,10 @@ init_loaded_region (
       {
         AudioClip * clip =
           audio_region_get_clip (self);
+        g_return_if_fail (clip);
 
-        /* copy the clip frames to the cache. */
-        self->frames =
-          malloc (
-            sizeof (float) *
-              (size_t) clip->num_frames *
-              clip->channels);
-        self->num_frames =
-          (size_t) clip->num_frames;
-        memcpy (
-          &self->frames[0], &clip->frames[0],
-          sizeof (float) *
-            (size_t) clip->num_frames *
-            clip->channels);
+        audio_region_init_frame_caches (
+          self, clip);
       }
       break;
     case REGION_TYPE_MIDI:
@@ -824,6 +833,8 @@ arranger_object_init_loaded (
   /* init positions */
   self->magic = ARRANGER_OBJECT_MAGIC;
 
+  g_warn_if_fail (self->pos.sub_tick < 1.0);
+
   switch (self->type)
     {
     case TYPE (REGION):
@@ -833,11 +844,24 @@ arranger_object_init_loaded (
     case TYPE (MIDI_NOTE):
       init_loaded_midi_note (
         (MidiNote *) self);
+      arranger_object_init_loaded (
+        (ArrangerObject *)
+        ((MidiNote *) self)->vel);
+      break;
+    case TYPE (SCALE_OBJECT):
+      init_loaded_scale_object (
+        (ScaleObject *) self);
+      break;
+    case TYPE (CHORD_OBJECT):
+      init_loaded_chord_object (
+        (ChordObject *) self);
       break;
     default:
       /* nothing needed */
       break;
     }
+
+  g_warn_if_fail (self->pos.sub_tick < 1.0);
 }
 
 /**
@@ -1038,13 +1062,16 @@ arranger_object_add_ticks_to_children (
  * @param left 1 to resize left side, 0 to resize
  *   right side.
  * @param ticks Number of ticks to resize.
+ * @param during_ui_action Whether this is called
+ *   during a UI action (not at the end).
  */
 void
 arranger_object_resize (
   ArrangerObject *         self,
   const int                left,
   ArrangerObjectResizeType type,
-  const double             ticks)
+  const double             ticks,
+  bool                     during_ui_action)
 {
   double before_length =
     arranger_object_get_length_in_ticks (self);
@@ -1077,6 +1104,15 @@ arranger_object_resize (
               arranger_object_set_position (
                 self, &tmp,
                 ARRANGER_OBJECT_POSITION_TYPE_LOOP_END,
+                F_NO_VALIDATE);
+            }
+          if (arranger_object_can_fade (self))
+            {
+              tmp = self->fade_out_pos;
+              position_add_ticks (&tmp, - ticks);
+              arranger_object_set_position (
+                self, &tmp,
+                ARRANGER_OBJECT_POSITION_TYPE_FADE_OUT,
                 F_NO_VALIDATE);
             }
 
@@ -1128,6 +1164,15 @@ arranger_object_resize (
                 ARRANGER_OBJECT_POSITION_TYPE_LOOP_END,
                 F_NO_VALIDATE);
             }
+          if (arranger_object_can_fade (self))
+            {
+              tmp = self->fade_out_pos;
+              position_add_ticks (&tmp, ticks);
+              arranger_object_set_position (
+                self, &tmp,
+                ARRANGER_OBJECT_POSITION_TYPE_FADE_OUT,
+                F_NO_VALIDATE);
+            }
 
           if (type ==
                 ARRANGER_OBJECT_RESIZE_STRETCH &&
@@ -1147,10 +1192,25 @@ arranger_object_resize (
                 arranger_object_get_length_in_ticks (
                   self);
 
-              /* stretch contents */
-              region_stretch (
-                region,
-                new_length / before_length);
+              /* FIXME this flag is not good,
+               * remove from this function and
+               * do it in the arranger */
+              if (during_ui_action)
+                {
+                  region->stretch_ratio =
+                    new_length /
+                    region->before_length;
+                }
+              else
+                {
+                  /* stretch contents */
+                  double stretch_ratio =
+                    new_length / before_length;
+                  g_message ("resizing with %f",
+                    stretch_ratio);
+                  region_stretch (
+                    region, stretch_ratio);
+                }
             }
         }
     }
@@ -1303,7 +1363,8 @@ Track *
 arranger_object_get_track (
   ArrangerObject * self)
 {
-  g_return_val_if_fail (self, NULL);
+  g_return_val_if_fail (
+    IS_ARRANGER_OBJECT (self), NULL);
 
   Track * track = NULL;
 
@@ -1376,7 +1437,8 @@ ArrangerWidget *
 arranger_object_get_arranger (
   ArrangerObject * self)
 {
-  g_return_val_if_fail (self, NULL);
+  g_return_val_if_fail (
+    IS_ARRANGER_OBJECT (self), NULL);
 
   Track * track =
     arranger_object_get_track (self);
@@ -1520,9 +1582,9 @@ find_region (
   ArrangerObject * self_obj =
     (ArrangerObject *) self;
   g_warn_if_fail (
-    position_is_equal (
+    position_is_equal_ticks (
       &self_obj->pos, &obj->pos) &&
-    position_is_equal (
+    position_is_equal_ticks (
       &self_obj->end_pos, &obj->end_pos));
 
   return obj;
@@ -1595,8 +1657,7 @@ find_automation_point (
   g_return_val_if_fail (
     region && region->num_aps > src->index, NULL);
 
-  AutomationPoint * ap =
-    region->aps[src->index];
+  AutomationPoint * ap = region->aps[src->index];
   g_return_val_if_fail (
     automation_point_is_equal (src, ap), NULL);
 
@@ -1708,7 +1769,7 @@ clone_region (
                 ARRANGER_OBJECT_CLONE_COPY_MAIN);
 
             midi_region_add_midi_note (
-              mr, mn, 0);
+              mr, mn, F_NO_PUBLISH_EVENTS);
           }
 
         new_region = (ZRegion *) mr;
@@ -1743,6 +1804,7 @@ clone_region (
 
         new_region = ar;
         new_region->pool_id = region->pool_id;
+        ar->musical_mode = region->musical_mode;
       }
     break;
     case REGION_TYPE_AUTOMATION:
@@ -1796,7 +1858,7 @@ clone_region (
                 ARRANGER_OBJECT_CLONE_COPY_MAIN);
 
             chord_region_add_chord_object (
-              cr, dest_co);
+              cr, dest_co, F_NO_PUBLISH_EVENTS);
           }
 
         new_region = cr;
@@ -1860,6 +1922,7 @@ clone_midi_note (
   mn->currently_listened = src->currently_listened;
   mn->last_listened_val = src->last_listened_val;
   mn->pos = src->pos;
+  mn->vel->vel_at_start = src->vel->vel_at_start;
 
   return (ArrangerObject *) mn;
 }
@@ -1869,14 +1932,12 @@ clone_chord_object (
   ChordObject *           src,
   ArrangerObjectCloneFlag flag)
 {
-  int is_main = 0;
-  if (flag == ARRANGER_OBJECT_CLONE_COPY_MAIN)
-    is_main = 1;
-
-  ArrangerObject * src_obj = (ArrangerObject *) src;
+  ArrangerObject * src_obj =
+    (ArrangerObject *) src;
   ChordObject * chord =
     chord_object_new (
-      &src_obj->region_id, src->index, is_main);
+      &src_obj->region_id, src->chord_index,
+      src->index);
 
   return (ArrangerObject *) chord;
 }
@@ -1980,9 +2041,11 @@ arranger_object_clone (
         Velocity * src = (Velocity *) self;
         MidiNote * mn =
           velocity_get_midi_note (src);
-        new_obj =
-          (ArrangerObject *)
+        Velocity * new_vel =
           velocity_new (mn, src->vel);
+        new_obj =
+          (ArrangerObject *) new_vel;
+        new_vel->vel_at_start = src->vel_at_start;
       }
       break;
     default:
@@ -2013,6 +2076,8 @@ arranger_object_clone (
     {
       new_obj->muted = self->muted;
     }
+
+  new_obj->magic = ARRANGER_OBJECT_MAGIC;
 
   return new_obj;
 }
@@ -2052,6 +2117,18 @@ arranger_object_split (
     arranger_object_clone (
       self, ARRANGER_OBJECT_CLONE_COPY_MAIN);
 
+  /* change to r1 if the original region was the
+   * clip editor region */
+  ZRegion * clip_editor_region =
+    clip_editor_get_region (CLIP_EDITOR);
+  bool set_clip_editor_region = false;
+  if (clip_editor_region == (ZRegion *) self)
+    {
+      set_clip_editor_region = true;
+      clip_editor_set_region (
+        CLIP_EDITOR, NULL, true);
+    }
+
   /* get global/local positions (the local pos
    * is after traversing the loops) */
   Position globalp, localp;
@@ -2079,9 +2156,14 @@ arranger_object_split (
         }
     }
 
-  /* for first region just set the end pos */
+  /* for first region set the end pos and fade
+   * out pos */
   arranger_object_end_pos_setter (
     *r1, &globalp);
+  arranger_object_set_position (
+    *r1, &localp,
+    ARRANGER_OBJECT_POSITION_TYPE_FADE_OUT,
+    F_NO_VALIDATE);
 
   /* for the second set the clip start and start
    * pos. */
@@ -2089,6 +2171,15 @@ arranger_object_split (
     *r2, &localp);
   arranger_object_pos_setter (
     *r2, &globalp);
+  Position r2_fade_out;
+  position_set_to_pos (
+    &r2_fade_out, &((*r2)->end_pos));
+  position_add_ticks (
+    &r2_fade_out, - (*r2)->pos.total_ticks);
+  arranger_object_set_position (
+    *r2, &r2_fade_out,
+    ARRANGER_OBJECT_POSITION_TYPE_FADE_OUT,
+    F_NO_VALIDATE);
 
   /* add them to the parent */
   switch (self->type)
@@ -2147,16 +2238,6 @@ arranger_object_split (
   arranger_selections_add_object (
     sel, *r2);
 
-  /* change to r1 if the original region was the
-   * clip editor region */
-  ZRegion * clip_editor_region =
-    clip_editor_get_region (CLIP_EDITOR);
-  if (clip_editor_region == (ZRegion *) self)
-    {
-      clip_editor_set_region (
-        CLIP_EDITOR, (ZRegion *) *r1);
-    }
-
   /* remove and free the original object */
   switch (self->type)
     {
@@ -2183,6 +2264,12 @@ arranger_object_split (
       break;
     }
 
+  if (set_clip_editor_region)
+    {
+      clip_editor_set_region (
+        CLIP_EDITOR, (ZRegion *) *r1, true);
+    }
+
   EVENTS_PUSH (ET_ARRANGER_OBJECT_CREATED, *r1);
   EVENTS_PUSH (ET_ARRANGER_OBJECT_CREATED, *r2);
 }
@@ -2196,14 +2283,37 @@ arranger_object_unsplit (
   ArrangerObject *         r2,
   ArrangerObject **        obj)
 {
+  /* change to the original region if the clip
+   * editor region is r1 or r2 */
+  ZRegion * clip_editor_region =
+    clip_editor_get_region (CLIP_EDITOR);
+  bool set_clip_editor_region = false;
+  if (clip_editor_region == (ZRegion *) r1 ||
+      clip_editor_region == (ZRegion *) r2)
+    {
+      set_clip_editor_region = true;
+      clip_editor_set_region (
+        CLIP_EDITOR, NULL, true);
+    }
+
   /* create the new object */
   *obj =
     arranger_object_clone (
       r1, ARRANGER_OBJECT_CLONE_COPY_MAIN);
 
-  /* set the end pos to the end pos of r2 */
+  /* set the end pos to the end pos of r2 and
+   * fade out */
   arranger_object_end_pos_setter (
     *obj, &r2->end_pos);
+  Position fade_out_pos;
+  position_set_to_pos (
+    &fade_out_pos, &r2->end_pos);
+  position_add_ticks (
+    &fade_out_pos, - r2->pos.total_ticks);
+  arranger_object_set_position (
+    *obj, &fade_out_pos,
+    ARRANGER_OBJECT_POSITION_TYPE_FADE_OUT,
+    F_NO_VALIDATE);
 
   /* add it to the parent */
   switch (r1->type)
@@ -2248,16 +2358,6 @@ arranger_object_unsplit (
   arranger_selections_add_object (
     sel, *obj);
 
-  /* change to r1 if the original region was the
-   * clip editor region */
-  ZRegion * clip_editor_region =
-    clip_editor_get_region (CLIP_EDITOR);
-  if (clip_editor_region == (ZRegion *) r1)
-    {
-      clip_editor_set_region (
-        CLIP_EDITOR, (ZRegion *) *obj);
-    }
-
   /* remove and free the original regions */
   switch (r1->type)
     {
@@ -2265,10 +2365,12 @@ arranger_object_unsplit (
       {
         track_remove_region (
           arranger_object_get_track (r1),
-          (ZRegion *) r1, F_PUBLISH_EVENTS, F_FREE);
+          (ZRegion *) r1, F_PUBLISH_EVENTS,
+          F_FREE);
         track_remove_region (
           arranger_object_get_track (r2),
-          (ZRegion *) r2, F_PUBLISH_EVENTS, F_FREE);
+          (ZRegion *) r2, F_PUBLISH_EVENTS,
+          F_FREE);
       }
       break;
     case ARRANGER_OBJECT_TYPE_MIDI_NOTE:
@@ -2289,6 +2391,12 @@ arranger_object_unsplit (
       break;
     default:
       break;
+    }
+
+  if (set_clip_editor_region)
+    {
+      clip_editor_set_region (
+        CLIP_EDITOR, (ZRegion *) *obj, true);
     }
 
   EVENTS_PUSH (ET_ARRANGER_OBJECT_CREATED, *obj);
@@ -2333,11 +2441,6 @@ static void
 free_region (
   ZRegion * self)
 {
-  if (self->name)
-    g_free (self->name);
-  if (G_IS_OBJECT (self->layout))
-    g_object_unref (self->layout);
-
 #define FREE_R(type,sc) \
   case REGION_TYPE_##type: \
     sc##_region_free_members (self); \
@@ -2351,6 +2454,13 @@ free_region (
       FREE_R (AUTOMATION, automation);
     }
 
+  g_free_and_null (self->name);
+  if (G_IS_OBJECT (self->layout))
+    {
+      object_free_w_func_and_null (
+        g_object_unref, self->layout);
+    }
+
 #undef FREE_R
 
   object_zero_and_free (self);
@@ -2360,14 +2470,15 @@ static void
 free_midi_note (
   MidiNote * self)
 {
-  g_return_if_fail (self->vel);
+  g_return_if_fail (
+    IS_MIDI_NOTE (self) && self->vel);
   arranger_object_free (
     (ArrangerObject *) self->vel);
 
   if (G_IS_OBJECT (self->layout))
     g_object_unref (self->layout);
 
-  free (self);
+  object_zero_and_free (self);
 }
 
 /**
@@ -2377,6 +2488,8 @@ void
 arranger_object_free (
   ArrangerObject * self)
 {
+  g_return_if_fail (IS_ARRANGER_OBJECT (self));
+
   switch (self->type)
     {
     case TYPE (REGION):
@@ -2389,34 +2502,34 @@ arranger_object_free (
       {
         Marker * marker = (Marker *) self;
         g_free (marker->name);
-        free (marker);
+        object_zero_and_free (marker);
       }
       return;
     case TYPE (CHORD_OBJECT):
       {
         ChordObject * co = (ChordObject *) self;
-        free (co);
+        object_zero_and_free (co);
       }
       return;
     case TYPE (SCALE_OBJECT):
       {
         ScaleObject * scale = (ScaleObject *) self;
         musical_scale_free (scale->scale);
-        free (scale);
+        object_zero_and_free (scale);
       }
       return;
     case TYPE (AUTOMATION_POINT):
       {
         AutomationPoint * ap =
           (AutomationPoint *) self;
-        free (ap);
+        object_zero_and_free (ap);
       }
       return;
     case TYPE (VELOCITY):
       {
         Velocity * vel =
           (Velocity *) self;
-        free (vel);
+        object_zero_and_free (vel);
       }
       return;
     default:

@@ -18,7 +18,10 @@
  */
 
 #include "actions/copy_tracks_action.h"
+#include "audio/router.h"
 #include "audio/track.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/timeline_selections.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/region.h"
@@ -26,6 +29,15 @@
 #include "project.h"
 #include "utils/flags.h"
 #include "utils/objects.h"
+#include "zrythm_app.h"
+
+void
+copy_tracks_action_init_loaded (
+  CopyTracksAction * self)
+{
+  tracklist_selections_init_loaded (
+    self->tls);
+}
 
 UndoableAction *
 copy_tracks_action_new (
@@ -36,8 +48,7 @@ copy_tracks_action_new (
     calloc (1, sizeof (
                  CopyTracksAction));
   UndoableAction * ua = (UndoableAction *) self;
-  ua->type =
-    UA_COPY_TRACKS;
+  ua->type = UA_COPY_TRACKS;
 
   self->tls = tracklist_selections_clone (tls);
   self->pos = pos;
@@ -54,13 +65,11 @@ copy_tracks_action_do (
     {
       /* create a new clone to use in the project */
       track =
-        track_clone (self->tls->tracks[i]);
+        track_clone (self->tls->tracks[i], false);
 
       /* add to tracklist at given pos */
       tracklist_insert_track (
-        TRACKLIST,
-        track,
-        self->pos + i,
+        TRACKLIST, track, self->pos + i,
         F_NO_PUBLISH_EVENTS,
         F_NO_RECALC_GRAPH);
 
@@ -70,7 +79,7 @@ copy_tracks_action_do (
         F_NO_PUBLISH_EVENTS);
     }
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   EVENTS_PUSH (ET_TRACKLIST_SELECTIONS_CHANGED,
                NULL);
@@ -102,7 +111,7 @@ copy_tracks_action_undo (
         F_NO_RECALC_GRAPH);
     }
 
-  mixer_recalc_graph (MIXER);
+  router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   EVENTS_PUSH (ET_TRACKLIST_SELECTIONS_CHANGED,
                NULL);

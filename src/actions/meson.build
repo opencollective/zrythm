@@ -18,6 +18,7 @@
 action_srcs = [
   'actions.c',
   'arranger_selections.c',
+  'channel_send_action.c',
   'create_plugins_action.c',
   'copy_tracks_action.c',
   'create_tracks_action.c',
@@ -28,6 +29,8 @@ action_srcs = [
   'edit_tracks_action.c',
   'move_plugins_action.c',
   'move_tracks_action.c',
+  'port_connection_action.c',
+  'transport_action.c',
   'undoable_action.c',
   'undo_stack.c',
   'undo_manager.c',

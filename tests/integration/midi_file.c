@@ -17,6 +17,8 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-test-config.h"
+
 #include "audio/engine_dummy.h"
 #include "audio/midi.h"
 #include "audio/midi_track.h"
@@ -81,7 +83,7 @@ test_midi_file_playback ()
       UndoableAction * ua =
         create_tracks_action_new (
           TRACK_TYPE_MIDI, NULL, file,
-          TRACKLIST->num_tracks, 1);
+          TRACKLIST->num_tracks, PLAYHEAD, 1);
       undo_manager_perform (
         UNDO_MANAGER, ua);
       supported_file_free (file);
@@ -157,4 +159,3 @@ main (int argc, char *argv[])
 
   return g_test_run ();
 }
-

@@ -34,10 +34,10 @@ typedef struct TracklistSelections TracklistSelections;
 
 typedef struct MoveTracksAction
 {
-  UndoableAction  parent_instance;
+  UndoableAction        parent_instance;
 
   /** Position to move the tracks to. */
-  int             pos;
+  int                   pos;
 
   TracklistSelections * tls;
 } MoveTracksAction;
@@ -67,6 +67,10 @@ static const cyaml_schema_value_t
     CYAML_FLAG_POINTER, MoveTracksAction,
     move_tracks_action_fields_schema),
 };
+
+void
+move_tracks_action_init_loaded (
+  MoveTracksAction * self);
 
 /**
  * Move tracks to given position.

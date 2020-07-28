@@ -36,10 +36,10 @@ if guile_snarf.found()
   scripts_conf += {
     'GUILE_SNARF': guile_snarf.path() }
 endif
-if get_option('guile-snarf-docs-path') != ''
+if get_option('guile_snarf_docs_path') != ''
   scripts_conf += {
     'GUILE_SNARF_DOCS_BIN': get_option (
-      'guile-snarf-docs-path'),
+      'guile_snarf_docs_path'),
     'GUILD_BIN': guild.path() }
 endif
 
@@ -82,4 +82,12 @@ translators_c_header_gen_wrap = configure_file (
   input: generic_guile_wrap_name,
   configuration: scripts_conf + {
     'SCRIPT_NAME': 'gen-translators-list.scm'},
+  )
+
+# create the gtk resources generator wrap
+gen_gtk_resources_xml_wrap = configure_file (
+  output: 'gen-gtk-resources-xml.sh',
+  input: generic_guile_wrap_name,
+  configuration: scripts_conf + {
+    'SCRIPT_NAME': 'gen-gtk-resources-xml.scm'},
   )

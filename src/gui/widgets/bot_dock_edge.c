@@ -27,8 +27,10 @@
 #include "gui/widgets/mixer.h"
 #include "gui/widgets/modulator_view.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/gtk.h"
 #include "utils/resources.h"
+#include "zrythm_app.h"
 
 G_DEFINE_TYPE (BotDockEdgeWidget,
                bot_dock_edge_widget,

@@ -31,6 +31,7 @@
 #include "utils/resources.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 
@@ -126,6 +127,24 @@ wrap_inspector_in_scrolled_window (
     GTK_WIDGET (viewport));
 
   return scroll;
+}
+
+/**
+ * Prepare for finalization.
+ */
+void
+left_dock_edge_widget_tear_down (
+  LeftDockEdgeWidget * self)
+{
+  g_message ("tearing down %p...", self);
+
+  if (self->track_inspector)
+    {
+      inspector_track_widget_tear_down (
+        self->track_inspector);
+    }
+
+  g_message ("done");
 }
 
 static void

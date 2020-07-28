@@ -23,12 +23,15 @@
 #include "audio/engine.h"
 #include "audio/port.h"
 #include "audio/track.h"
-#include "gui/backend/events.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "plugins/plugin.h"
 #include "plugins/lv2/lv2_control.h"
-#include "utils/math.h"
 #include "project.h"
+#include "utils/flags.h"
+#include "utils/math.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 /**
  * Get the current real value of the control.
@@ -124,6 +127,12 @@ control_port_normalized_val_to_real (
         (float) math_get_amp_val_from_fader (
           normalized_val);
     }
+  else if (id->flags & PORT_FLAG_AUTOMATABLE)
+    {
+      return
+        self->minf +
+        normalized_val * (self->maxf - self->minf);
+    }
   else
     {
       return normalized_val;
@@ -203,6 +212,13 @@ control_port_real_val_to_normalized (
         (float)
         math_get_fader_val_from_amp (real_val);
     }
+  else if (id->flags & PORT_FLAG_AUTOMATABLE)
+    {
+      float sizef = self->maxf - self->minf;
+      return
+        (sizef - (self->maxf - real_val)) /
+        sizef;
+    }
   else
     {
       return real_val;
@@ -217,16 +233,16 @@ control_port_real_val_to_normalized (
  * value and must be translated to the actual value
  * before setting it.
  *
- * @param automating 1 if this is from an automation
- *   event. This will set Lv2Port's automating field
- *   to 1 which will cause the plugin to receive
- *   a UI event for this change.
+ * @param automating Whether this is from an
+ *   automation event. This will set Lv2Port's
+ *   automating field to true, which will cause the
+ *   plugin to receive a UI event for this change.
  */
 void
 control_port_set_val_from_normalized (
   Port * self,
   float  val,
-  int    automating)
+  bool   automating)
 {
   PortIdentifier * id = &self->id;
   if (id->flags & PORT_FLAG_PLUGIN_CONTROL)
@@ -239,7 +255,7 @@ control_port_set_val_from_normalized (
           float real_val = val;
           self->base_value = real_val;
           port_set_control_value (
-            self, real_val, 0, 1);
+            self, real_val, false, true);
           return;
         }
 
@@ -250,25 +266,9 @@ control_port_set_val_from_normalized (
             Lv2Control * ctrl =
               self->lv2_port->lv2_control;
             g_return_if_fail (ctrl);
-            float real_val;
-            if (ctrl->is_logarithmic)
-              {
-                /* see http://lv2plug.in/ns/ext/port-props/port-props.html#rangeSteps */
-                real_val =
-                  self->minf *
-                    powf (
-                      self->maxf / self->minf, val);
-              }
-            else if (ctrl->is_toggle)
-              {
-                real_val = val >= 0.001f ? 1.f : 0.f;
-              }
-            else
-              {
-                real_val =
-                  self->minf +
-                  val * (self->maxf - self->minf);
-              }
+            float real_val =
+              control_port_normalized_val_to_real (
+                self, val);
 
             if (!math_floats_equal (
                   port_get_control_value (self, 0),
@@ -330,13 +330,13 @@ control_port_set_val_from_normalized (
       Channel * ch = track_get_channel (track);
       if (!math_floats_equal (
             fader_get_fader_val (
-              &ch->fader), val))
+              ch->fader), val))
         {
           EVENTS_PUSH (
             ET_AUTOMATION_VALUE_CHANGED, self);
         }
       fader_set_amp (
-        &ch->fader,
+        ch->fader,
         (float)
         math_get_amp_val_from_fader (val));
     }
@@ -360,7 +360,7 @@ control_port_set_val_from_normalized (
         val * (self->maxf - self->minf);
       if (!math_floats_equal (
             val,
-            track->processor.midi_automatables[
+            track->processor->midi_automatables[
               self->id.port_index]->control))
         {
           EVENTS_PUSH (
@@ -368,6 +368,15 @@ control_port_set_val_from_normalized (
         }
       port_set_control_value (
         self, real_val, 0, 0);
+    }
+  else if (id->flags & PORT_FLAG_AUTOMATABLE)
+    {
+      float real_val =
+        control_port_normalized_val_to_real (
+          self, val);
+      port_set_control_value (
+        self, real_val, F_NOT_NORMALIZED,
+        false);
     }
   else
     {

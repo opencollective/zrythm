@@ -28,9 +28,12 @@
 #include <stdlib.h>
 
 #include "audio/channel.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/piano_roll.h"
 #include "audio/track.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/arrays.h"
 
 DRUM_LABELS;

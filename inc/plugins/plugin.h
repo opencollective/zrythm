@@ -26,9 +26,8 @@
 #ifndef __PLUGINS_BASE_PLUGIN_H__
 #define __PLUGINS_BASE_PLUGIN_H__
 
-#include "config.h"
+#include "zrythm-config.h"
 
-#include "audio/automatable.h"
 #include "audio/port.h"
 #include "plugins/carla_native_plugin.h"
 #include "plugins/lv2_plugin.h"
@@ -55,49 +54,64 @@ typedef struct AutomationTrack AutomationTrack;
   (tr && tr->magic == PLUGIN_MAGIC)
 
 /**
+ * Plugin UI refresh rate limits.
+ */
+#define PLUGIN_MIN_REFRESH_RATE 30.f
+#define PLUGIN_MAX_REFRESH_RATE 121.f
+
+/**
  * The base plugin
  * Inheriting plugins must have this as a child
  */
 typedef struct Plugin
 {
-  PluginIdentifier     id;
+  PluginIdentifier  id;
 
   /**
    * Pointer back to plugin in its original format.
    */
-  Lv2Plugin *          lv2;
+  Lv2Plugin *       lv2;
 
   /** Pointer to Carla native plugin. */
-  CarlaNativePlugin *  carla;
+  CarlaNativePlugin * carla;
 
   /** Descriptor. */
-  PluginDescriptor *   descr;
+  PluginDescriptor * descr;
 
   /** Ports coming in as input. */
-  Port **             in_ports;
-  int                 num_in_ports;
-  size_t              in_ports_size;
+  Port **           in_ports;
+  int               num_in_ports;
+  size_t            in_ports_size;
 
   /** Outgoing ports. */
-  Port **             out_ports;
-  int                 num_out_ports;
-  size_t              out_ports_size;
+  Port **           out_ports;
+  int               num_out_ports;
+  size_t            out_ports_size;
 
   /** Control for plugin enabled. */
-  Port *              enabled;
+  Port *            enabled;
 
-  PluginBank **       banks;
-  int                 num_banks;
-  size_t              banks_size;
+  PluginBank **     banks;
+  int               num_banks;
+  size_t            banks_size;
 
   PluginPresetIdentifier selected_bank;
   PluginPresetIdentifier selected_preset;
 
   /** Whether plugin UI is opened or not. */
-  bool                visible;
+  bool              visible;
 
-  /** The latency in samples. */
-  nframes_t           latency;
+  /** Latency reported by the Lv2Plugin, if any,
+   * in samples. */
+  nframes_t         latency;
+
+  /** Whether the plugin is currently instantiated
+   * or not. */
+  bool              instantiated;
+
+  /** Whether the plugin is currently activated
+   * or not. */
+  bool              activated;
 
   /**
    * Whether the UI has finished instantiating.
@@ -111,15 +125,25 @@ typedef struct Plugin
    * then no UI updates should be sent to the
    * plugin.
    */
-  int                  ui_instantiated;
+  int               ui_instantiated;
 
   /** Update frequency of the UI, in Hz (times
    * per second). */
-  float                ui_update_hz;
+  float             ui_update_hz;
+
+  /**
+   * State directory (only basename).
+   *
+   * Used for saving/loading the state.
+   *
+   * @note This is only the directory basename and
+   *   should go in project/plugins/states.
+   */
+  char *            state_dir;
 
   /** Whether the plugin is currently being
    * deleted. */
-  bool                 deleting;
+  bool              deleting;
 
   /** Active preset item, if wrapped or generic
    * UI. */
@@ -137,23 +161,25 @@ typedef struct Plugin
    * are only not wrapped when they have external
    * UIs. In that case, this must be NULL.
    */
-  GtkWindow *          window;
+  GtkWindow *       window;
 
   /** The GdkWindow of this widget should be
    * somewhere inside \ref Plugin.window and will
    * be used for wrapping plugin UIs in. */
-  GtkEventBox *        ev_box;
+  GtkEventBox *     ev_box;
 
   /** Vbox containing the above ev_box for wrapping,
    * or used for packing generic UI controls. */
-  GtkBox *             vbox;
+  GtkBox *          vbox;
 
   /** ID of the delete-event signal for \ref
    * Plugin.window so that we can
    * deactivate before freeing the plugin. */
-  gulong             delete_event_id;
+  gulong            delete_event_id;
 
-  int                 magic;
+  int               magic;
+
+  bool              is_project;
 } Plugin;
 
 static const cyaml_schema_field_t
@@ -175,7 +201,7 @@ plugin_fields_schema[] =
     Plugin, in_ports, port_schema),
   YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT (
     Plugin, out_ports, port_schema),
-  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPTIONAL (
+  YAML_FIELD_DYN_PTR_ARRAY_VAR_COUNT_OPT (
     Plugin, banks, plugin_bank_schema),
   YAML_FIELD_MAPPING_EMBEDDED (
     Plugin, selected_bank,
@@ -187,6 +213,8 @@ plugin_fields_schema[] =
     Plugin, enabled, port_fields_schema),
   YAML_FIELD_INT (
     Plugin, visible),
+  YAML_FIELD_STRING_PTR_OPTIONAL (
+    Plugin, state_dir),
 
   CYAML_FIELD_END
 };
@@ -201,7 +229,8 @@ static const cyaml_schema_value_t
 
 void
 plugin_init_loaded (
-  Plugin * self);
+  Plugin * self,
+  bool     project);
 
 /**
  * Adds an AutomationTrack to the Plugin.
@@ -278,19 +307,44 @@ plugin_get_enabled_port (
 void
 plugin_remove_ats_from_automation_tracklist (
   Plugin * pl,
-  int      free_ats);
+  bool     free_ats,
+  bool     fire_events);
 
 /**
  * Clones the given plugin.
+ *
+ * @bool src_is_project Whether \ref pl is a project
+ *   plugin.
  */
 Plugin *
 plugin_clone (
-  Plugin * pl);
+  Plugin * pl,
+  bool     src_is_project);
 
-void
+/**
+ * Activates or deactivates the plugin.
+ *
+ * @param activate True to activate, false to
+ *   deactivate.
+ */
+int
 plugin_activate (
   Plugin * pl,
   bool     activate);
+
+/**
+ * Moves the plugin to the given slot in
+ * the given channel.
+ *
+ * If a plugin already exists, it deletes it and
+ * replaces it.
+ */
+void
+plugin_move (
+  Plugin *       pl,
+  Channel *      ch,
+  PluginSlotType slot_type,
+  int            slot);
 
 /**
  * Sets the channel and slot on the plugin and
@@ -322,6 +376,19 @@ plugin_move_automation (
   PluginSlotType new_slot_type,
   int            new_slot);
 
+void
+plugin_set_is_project (
+  Plugin * self,
+  bool     is_project);
+
+void
+plugin_append_ports (
+  Plugin *  pl,
+  Port ***  ports,
+  int *     max_size,
+  bool      is_dynamic,
+  int *     size);
+
 /**
  * Returns the escaped name of the plugin.
  */
@@ -330,25 +397,20 @@ plugin_get_escaped_name (
   Plugin * pl);
 
 /**
- * Generates a state directory path for the plugin.
- *
- * @param mkdir Create the directory at the path.
- *
- * @return The path. Must be free'd by caller with
- *   g_free().
+ * Returns the state dir as an absolute path.
  */
 char *
-plugin_generate_state_dir (
-  Plugin * pl,
-  bool     mkdir);
+plugin_get_abs_state_dir (
+  Plugin * self,
+  bool     is_backup);
 
 /**
- * Returns if the Plugin has a supported custom
- * UI.
+ * Ensures the state dir exists or creates it.
  */
-int
-plugin_has_supported_custom_ui (
-  Plugin * self);
+void
+plugin_ensure_state_dir (
+  Plugin * self,
+  bool     is_backup);
 
 Channel *
 plugin_get_channel (
@@ -409,9 +471,15 @@ plugin_prepare_process (
 /**
  * Instantiates the plugin (e.g. when adding to a
  * channel)
+ *
+ * @param project Whether this is a project plugin
+ *   (as opposed to a clone used in actions).
  */
 int
-plugin_instantiate (Plugin * plugin);
+plugin_instantiate (
+  Plugin *    self,
+  bool        project,
+  LilvState * state);
 
 /**
  * Sets the track and track_pos on the plugin.
@@ -433,6 +501,10 @@ plugin_process (
   const long  g_start_frames,
   const nframes_t  local_offset,
   const nframes_t   nframes);
+
+char *
+plugin_generate_window_title (
+  Plugin * plugin);
 
 /**
  * Process show ui
@@ -575,6 +647,26 @@ plugin_disconnect_from_prefader (
  */
 void
 plugin_disconnect (Plugin * plugin);
+
+/**
+ * Deletes any state files associated with this
+ * plugin.
+ *
+ * This should be called when a plugin instance is
+ * removed from the project (including undo stacks)
+ * to remove any files not needed anymore.
+ */
+void
+plugin_delete_state_files (
+  Plugin * self);
+
+/**
+ * Cleans up an instantiated but not activated
+ * plugin.
+ */
+int
+plugin_cleanup (
+  Plugin * self);
 
 /**
  * Frees given plugin, breaks all its port connections, and frees its ports

@@ -76,7 +76,7 @@ Hacking Zrythm
     └── TRANSLATORS                  # List of translators
 
 # Debugging
-Use `GDK_SYNCHRONIZE=1 G_DEBUG=fatal_warnings gdb build/src/zrythm`.
+Use `G_DEBUG=fatal_warnings gdb build/src/zrythm`.
 `G_DEBUG=fatal_warnings` will trigger break points at
 warning messages, and is very useful when debugging.
 
@@ -91,6 +91,11 @@ and it will automatically break there for you.
 
 For more information on warnings and assertions see
 <https://developer.gnome.org/glib/stable/glib-Warnings-and-Assertions.html>.
+
+We suggest building with `-Dextra_debug_info` which
+essentially adds `-g3` to the CFLAGS. This allows
+use of C macros in gdb so you can do `p TRACKLIST`
+instead of `p zrythm->project->tracklist`.
 
 ## Environment Variables
 In addition to GTK/GLib variables, Zrythm
@@ -119,7 +124,7 @@ to color all the track backgrounds red.
 # Tests and Coverage
 To run the test suite, use
 
-    meson build -Denable-tests=true
+    meson build -Dtests=true
 
 followed by
 
@@ -131,7 +136,7 @@ To get a coverage report see
 # Profiling
 ## gprof
 To profile with gprof,
-use the `enable_profiling` option when running meson,
+use the `profiling` option when running meson,
 then build and run the program normally. The program
 must end gracefully (ie, not Ctrl-C). When the
 program ends, run

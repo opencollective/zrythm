@@ -17,9 +17,6 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef __AUDIO_CHANNEL_H__
-#define __AUDIO_CHANNEL_H__
-
 /**
  * \file
  *
@@ -27,13 +24,14 @@
  * the mixer.
  */
 
-#include "config.h"
+#ifndef __AUDIO_CHANNEL_H__
+#define __AUDIO_CHANNEL_H__
 
-#include "audio/automatable.h"
+#include "zrythm-config.h"
+
 #include "audio/channel_send.h"
 #include "audio/ext_port.h"
 #include "audio/fader.h"
-#include "audio/passthrough_processor.h"
 #include "plugins/plugin.h"
 #include "utils/audio.h"
 #include "utils/yaml.h"
@@ -41,7 +39,7 @@
 #include <gdk/gdk.h>
 
 #ifdef HAVE_JACK
-#include <jack/jack.h>
+#include "weak_libjack.h"
 #endif
 
 typedef struct AutomationTrack AutomationTrack;
@@ -88,8 +86,10 @@ typedef struct Channel
   /**
    * The sends strip.
    *
-   * The first 5 are pre-fader and the rest are
-   * post-fader.
+   * The first 6 (slots 0-5) are pre-fader and the
+   * rest are post-fader.
+   *
+   * @note See CHANNEL_SEND_POST_FADER_START_SLOT.
    */
   ChannelSend      sends[STRIP_SIZE];
 
@@ -104,12 +104,12 @@ typedef struct Channel
    *
    * If all_midi_ins is enabled, these are ignored.
    */
-  ExtPort *         ext_midi_ins[EXT_PORTS_MAX];
-  int               num_ext_midi_ins;
+  ExtPort *        ext_midi_ins[EXT_PORTS_MAX];
+  int              num_ext_midi_ins;
 
   /** If 1, the channel will connect to all MIDI ins
    * found. */
-  int               all_midi_ins;
+  int              all_midi_ins;
 
   /**
    * External audio L inputs that are currently
@@ -123,12 +123,12 @@ typedef struct Channel
    * If all_stereo_l_ins is enabled, these are
    * ignored.
    */
-  ExtPort *         ext_stereo_l_ins[EXT_PORTS_MAX];
-  int               num_ext_stereo_l_ins;
+  ExtPort *        ext_stereo_l_ins[EXT_PORTS_MAX];
+  int              num_ext_stereo_l_ins;
 
   /** If 1, the channel will connect to all
    * stereo L ins found. */
-  int               all_stereo_l_ins;
+  int              all_stereo_l_ins;
 
   /**
    * External audio R inputs that are currently
@@ -142,12 +142,12 @@ typedef struct Channel
    * If all_stereo_r_ins is enabled, these are
    * ignored.
    */
-  ExtPort *         ext_stereo_r_ins[EXT_PORTS_MAX];
-  int               num_ext_stereo_r_ins;
+  ExtPort *        ext_stereo_r_ins[EXT_PORTS_MAX];
+  int              num_ext_stereo_r_ins;
 
   /** If 1, the channel will connect to all
    * stereo R ins found. */
-  int               all_stereo_r_ins;
+  int              all_stereo_r_ins;
 
   /**
    * 1 or 0 flags for each channel to enable it or
@@ -156,22 +156,22 @@ typedef struct Channel
    * If all_midi_channels is enabled, this is
    * ignored.
    */
-  int               midi_channels[16];
+  int              midi_channels[16];
 
   /** If 1, the channel will accept MIDI messages
    * from all MIDI channels.
    */
-  int               all_midi_channels;
+  int              all_midi_channels;
 
   /** The channel fader. */
-  Fader            fader;
+  Fader *          fader;
 
   /**
    * Prefader.
    *
    * The last plugin should connect to this.
    */
-  PassthroughProcessor prefader;
+  Fader *          prefader;
 
   /**
    * MIDI output for sending MIDI signals to other
@@ -241,10 +241,10 @@ channel_fields_schema[] =
     channel_send_schema, STRIP_SIZE),
   YAML_FIELD_MAPPING_PTR_OPTIONAL (
     Channel, instrument, plugin_fields_schema),
-  YAML_FIELD_MAPPING_EMBEDDED (
+  YAML_FIELD_MAPPING_PTR (
     Channel, prefader,
-    passthrough_processor_fields_schema),
-  YAML_FIELD_MAPPING_EMBEDDED (
+    fader_fields_schema),
+  YAML_FIELD_MAPPING_PTR (
     Channel, fader, fader_fields_schema),
   YAML_FIELD_MAPPING_PTR_OPTIONAL (
     Channel, midi_out,
@@ -297,7 +297,9 @@ channel_schema =
 };
 
 void
-channel_init_loaded (Channel * channel);
+channel_init_loaded (
+  Channel * channel,
+  bool      project);
 
 /**
  * Handles the recording logic inside the process
@@ -370,19 +372,53 @@ channel_add_balance_control (
 float
 channel_get_balance_control (void * _channel);
 
+#if 0
 /* ---- getters ---- */
 
+/**
+ * MIDI peak.
+ *
+ * @note Used by the UI.
+ */
 float
-channel_get_current_l_db (void * _channel);
+channel_get_current_midi_peak (
+  void * _channel);
 
+/**
+ * Digital peak.
+ *
+ * @note Used by the UI.
+ */
 float
-channel_get_current_r_db (void * _channel);
+channel_get_current_l_digital_peak (
+  void * _channel);
 
+/**
+ * Digital peak.
+ *
+ * @note Used by the UI.
+ */
 float
-channel_get_current_l_peak (void * _channel);
+channel_get_current_r_digital_peak (
+  void * _channel);
 
+/**
+ * Digital peak.
+ *
+ * @note Used by the UI.
+ */
 float
-channel_get_current_r_peak (void * _channel);
+channel_get_current_l_digital_peak_max (
+  void * _channel);
+
+/**
+ * Digital peak.
+ *
+ * @note Used by the UI.
+ */
+float
+channel_get_current_r_digital_peak_max (
+  void * _channel);
 
 /* ---- end getters ---- */
 
@@ -393,6 +429,8 @@ channel_set_current_l_db (
 void
 channel_set_current_r_db (
   Channel * channel, float val);
+
+#endif
 
 /**
  * Sets fader to 0.0.
@@ -468,15 +506,6 @@ channel_get_output_track (
   Channel * self);
 
 /**
- * Updates the output of the Channel (where the
- * Channel routes to.
- */
-void
-channel_update_output (
-  Channel * ch,
-  Track * output);
-
-/**
  * Called when the input has changed for Midi,
  * Instrument or Audio tracks.
  */
@@ -536,15 +565,26 @@ channel_update_track_pos (
   Channel * self,
   int       pos);
 
+int
+channel_get_plugins (
+  Channel * self,
+  Plugin ** pls);
+
 /**
  * Clones the channel recursively.
  *
- * @param track The track to use for getting the name.
+ * @note The given track is not cloned.
+ *
+ * @param track The track to use for getting the
+ *   name.
+ * @bool src_is_project Whether \ref ch is a project
+ *   channel.
  */
 Channel *
 channel_clone (
   Channel * ch,
-  Track *   track);
+  Track *   track,
+  bool      src_is_project);
 
 /**
  * Disconnects the channel from the processing
@@ -562,15 +602,14 @@ channel_clone (
 void
 channel_disconnect (
   Channel * channel,
-  int       remove_pl,
-  int       recalc_graph);
+  bool      remove_pl);
 
 /**
  * Frees the channel.
  *
- * Channels should never be free'd by themselves
- * in normal circumstances. Use track_free to
- * free them.
+ * @note Channels should never be free'd by
+ * themselves in normal circumstances. Use
+ * track_free() to free them.
  */
 void
 channel_free (Channel * channel);

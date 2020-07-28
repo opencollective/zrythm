@@ -18,9 +18,11 @@
  */
 
 #include "gui/widgets/create_project_dialog.h"
+#include "settings/settings.h"
 #include "utils/io.h"
 #include "utils/resources.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <glib/gi18n.h>
 

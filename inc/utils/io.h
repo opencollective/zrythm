@@ -24,7 +24,7 @@
 #ifndef __UTILS_IO_H__
 #define __UTILS_IO_H__
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #include <stdio.h>
 
@@ -95,6 +95,10 @@ io_remove (
 
 /**
  * Removes a dir, optionally forcing deletion.
+ *
+ * For safety reasons, this only accepts an
+ * absolute path with length greater than 25 if
+ * forced.
  */
 int
 io_rmdir (

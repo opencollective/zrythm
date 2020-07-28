@@ -21,11 +21,12 @@
  * \file
  *
  * GTK utils.
- * TODO merge with UI
  */
 
 #ifndef __UTILS_GTK_H__
 #define __UTILS_GTK_H__
+
+#include <stdbool.h>
 
 #include <gtk/gtk.h>
 
@@ -47,43 +48,43 @@
 #define CREATE_CUT_MENU_ITEM(action) \
   z_gtk_create_menu_item ( \
     _("Cu_t"), \
-    "z-edit-cut", \
+    "edit-cut", \
     ICON_TYPE_ZRYTHM, NULL, 0, action)
 
 #define CREATE_COPY_MENU_ITEM(action) \
   z_gtk_create_menu_item ( \
     _("_Copy"), \
-    "z-edit-copy", \
+    "edit-copy", \
     ICON_TYPE_ZRYTHM, NULL, 0, action)
 
 #define CREATE_PASTE_MENU_ITEM(action) \
   z_gtk_create_menu_item ( \
     _("_Paste"), \
-    "z-edit-paste", \
+    "edit-paste", \
     ICON_TYPE_ZRYTHM, NULL, 0, action)
 
 #define CREATE_DELETE_MENU_ITEM(action) \
   z_gtk_create_menu_item ( \
     _("_Delete"), \
-    "z-edit-delete", \
+    "edit-delete", \
     ICON_TYPE_ZRYTHM, NULL, 0, action)
 
 #define CREATE_CLEAR_SELECTION_MENU_ITEM(action) \
   z_gtk_create_menu_item ( \
     _("Cle_ar Selection"), \
-    "z-edit-clear", \
+    "edit-clear", \
     ICON_TYPE_ZRYTHM, NULL, 0, action)
 
 #define CREATE_SELECT_ALL_MENU_ITEM(action) \
   z_gtk_create_menu_item ( \
     _("Select A_ll"), \
-    "z-edit-select-all", \
+    "edit-select-all", \
     ICON_TYPE_ZRYTHM, NULL, 0, action)
 
 #define CREATE_DUPLICATE_MENU_ITEM(action) \
   z_gtk_create_menu_item ( \
     _("Duplicate"), \
-    "z-edit-copy", \
+    "edit-copy", \
     ICON_TYPE_ZRYTHM, NULL, 0, action)
 
 #define CREATE_MUTE_MENU_ITEM(action) \
@@ -493,6 +494,19 @@ void
 z_gtk_widget_set_margin (
   GtkWidget * widget,
   int         margin);
+
+GtkFlowBoxChild *
+z_gtk_flow_box_get_selected_child (
+  GtkFlowBox * self);
+
+/**
+ * Callback to use for simple directory links.
+ */
+bool
+z_gtk_activate_dir_link_func (
+  GtkLabel * label,
+  char *     uri,
+  void *     data);
 
 /**
  * @}

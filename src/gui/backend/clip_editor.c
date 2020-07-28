@@ -29,16 +29,21 @@
 #include <stdlib.h>
 
 #include "audio/channel.h"
+#include "audio/router.h"
+#include "audio/track.h"
 #include "gui/backend/clip_editor.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/arranger_object.h"
 #include "gui/widgets/bot_dock_edge.h"
 #include "gui/widgets/center_dock.h"
 #include "gui/widgets/clip_editor.h"
 #include "gui/widgets/main_window.h"
-#include "audio/track.h"
 #include "project.h"
 #include "utils/flags.h"
+#include "utils/objects.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 /**
  * Inits the ClipEditor after a Project is loaded.
@@ -47,8 +52,11 @@ void
 clip_editor_init_loaded (
   ClipEditor * self)
 {
-  g_message ("Initializing loaded Clip Editor...");
+  g_message ("%s: initing...", __func__);
+
   piano_roll_init_loaded (&self->piano_roll);
+
+  g_message ("%s: done", __func__);
 }
 
 /**
@@ -59,7 +67,8 @@ clip_editor_init_loaded (
 void
 clip_editor_set_region (
   ClipEditor * self,
-  ZRegion *     region)
+  ZRegion *    region,
+  bool         fire_events)
 {
   int recalc_graph = 0;
   if (self->has_region)
@@ -71,7 +80,7 @@ clip_editor_set_region (
               self->region_id.track_pos];
           channel_reattach_midi_editor_manual_press_port (
             track_get_channel (track),
-            F_DISCONNECT, F_NO_RECALC_GRAPH);
+            F_NO_CONNECT, F_NO_RECALC_GRAPH);
           recalc_graph = 1;
         }
     }
@@ -93,11 +102,11 @@ clip_editor_set_region (
     }
 
   if (recalc_graph)
-    mixer_recalc_graph (MIXER);
+    router_recalc_graph (ROUTER, F_NOT_SOFT);
 
   /* if first time showing a region, show the
    * event viewer as necessary */
-  if (!self->has_region && region)
+  if (fire_events && !self->has_region && region)
     {
       EVENTS_PUSH (
         ET_CLIP_EDITOR_FIRST_TIME_REGION_SELECTED,
@@ -117,7 +126,8 @@ clip_editor_set_region (
 
   self->region_changed = 1;
 
-  if (ZRYTHM_HAVE_UI && MW_CLIP_EDITOR)
+  if (fire_events && ZRYTHM_HAVE_UI &&
+      MAIN_WINDOW && MW_CLIP_EDITOR)
     {
       clip_editor_widget_on_region_changed (
         MW_CLIP_EDITOR);
@@ -184,8 +194,44 @@ clip_editor_get_region_for_widgets (
 }
 #endif
 
+ArrangerSelections *
+clip_editor_get_arranger_selections (
+  ClipEditor * self)
+{
+  ZRegion * region =
+    clip_editor_get_region (CLIP_EDITOR);
+  if (!region)
+    {
+      return NULL;
+    }
+
+  ArrangerSelections * sel =
+    region_get_arranger_selections (region);
+  if (!sel)
+    {
+      return NULL;
+    }
+
+  return sel;
+}
+
+/**
+ * Creates a new clip editor.
+ */
+ClipEditor *
+clip_editor_new (void)
+{
+  ClipEditor * self = object_new (ClipEditor);
+
+  return self;
+}
+
+/**
+ * Inits the clip editor.
+ */
 void
-clip_editor_init (ClipEditor * self)
+clip_editor_init (
+  ClipEditor * self)
 {
   piano_roll_init (&self->piano_roll);
   audio_clip_editor_init (&self->audio_clip_editor);
@@ -193,3 +239,9 @@ clip_editor_init (ClipEditor * self)
   automation_editor_init (&self->automation_editor);
 }
 
+void
+clip_editor_free (
+  ClipEditor * self)
+{
+  object_zero_and_free (self);
+}

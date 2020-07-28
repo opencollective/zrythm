@@ -21,11 +21,12 @@
 #include "audio/channel.h"
 #include "audio/instrument_track.h"
 #include "audio/midi_region.h"
-#include "audio/mixer.h"
 #include "audio/track.h"
 #include "audio/tracklist.h"
 #include "audio/transport.h"
 #include "audio/velocity.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/arranger.h"
 #include "gui/widgets/bot_dock_edge.h"
 #include "gui/widgets/center_dock.h"
@@ -55,6 +56,7 @@
 #include "utils/resources.h"
 #include "settings/settings.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -420,6 +422,8 @@ midi_arranger_listen_notes (
   ArrangerWidget * self,
   int              listen)
 {
+  /*g_message ("%s: listen: %d", __func__, listen);*/
+
   if (!g_settings_get_boolean (
          S_UI, "listen-notes"))
     return;

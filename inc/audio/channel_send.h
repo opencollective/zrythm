@@ -34,6 +34,7 @@
 typedef struct StereoPorts StereoPorts;
 typedef struct Track Track;
 typedef struct Port Port;
+typedef struct _ChannelSendWidget ChannelSendWidget;
 
 /**
  * @addtogroup audio
@@ -41,7 +42,14 @@ typedef struct Port Port;
  * @{
  */
 
-#define channel_send_is_prefader(x) (x->slot < 6)
+/**
+ * The slot where post-fader sends begin (starting
+ * from 0).
+ */
+#define CHANNEL_SEND_POST_FADER_START_SLOT 6
+
+#define channel_send_is_prefader(x) \
+  (x->slot < CHANNEL_SEND_POST_FADER_START_SLOT)
 
 /**
  * Channel send.
@@ -149,11 +157,16 @@ channel_send_set_amount_from_widget (
 
 /**
  * Connects a send to stereo ports.
+ *
+ * This function takes either \ref stereo or both
+ * \ref l and \ref r.
  */
 void
 channel_send_connect_stereo (
   ChannelSend * self,
-  StereoPorts * stereo);
+  StereoPorts * stereo,
+  Port *        l,
+  Port *        r);
 
 /**
  * Connects a send to a midi port.
@@ -187,6 +200,25 @@ void
 channel_send_get_dest_name (
   ChannelSend * self,
   char *        buf);
+
+ChannelSend *
+channel_send_clone (
+  ChannelSend * self);
+
+ChannelSendWidget *
+channel_send_find_widget (
+  ChannelSend * self);
+
+/**
+ * Finds the project send from a given send instance.
+ */
+ChannelSend *
+channel_send_find (
+  ChannelSend * self);
+
+void
+channel_send_free (
+  ChannelSend * self);
 
 /**
  * @}

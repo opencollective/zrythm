@@ -17,6 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <math.h>
 #include <stdlib.h>
 
 #include "audio/chord_object.h"
@@ -25,6 +26,7 @@
 #include "gui/widgets/chord_object.h"
 #include "project.h"
 #include "utils/flags.h"
+#include "zrythm_app.h"
 
 /**
  * Creates a ChordObject.
@@ -32,8 +34,8 @@
 ChordObject *
 chord_object_new (
   RegionIdentifier * region_id,
-  int index,
-  int is_main)
+  int                chord_index,
+  int                index)
 {
   ChordObject * self =
     calloc (1, sizeof (ChordObject));
@@ -42,9 +44,11 @@ chord_object_new (
     (ArrangerObject *) self;
   obj->type = ARRANGER_OBJECT_TYPE_CHORD_OBJECT;
 
+  self->chord_index = chord_index;
   self->index = index;
   region_identifier_copy (
     &obj->region_id, region_id);
+  self->magic = CHORD_OBJECT_MAGIC;
 
   arranger_object_init (obj);
 
@@ -60,7 +64,7 @@ chord_object_get_chord_descriptor (
   ChordObject * self)
 {
   g_return_val_if_fail (CLIP_EDITOR, NULL);
-  return CHORD_EDITOR->chords[self->index];
+  return CHORD_EDITOR->chords[self->chord_index];
 }
 
 int
@@ -73,7 +77,9 @@ chord_object_is_equal (
   ArrangerObject * obj_b =
     (ArrangerObject *) b;
   return
-    position_is_equal (&obj_a->pos, &obj_b->pos) &&
+    position_is_equal_ticks (
+      &obj_a->pos, &obj_b->pos) &&
+    a->chord_index == b->chord_index &&
     a->index == b->index;
 }
 

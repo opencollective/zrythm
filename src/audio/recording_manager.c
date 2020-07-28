@@ -33,6 +33,8 @@
 #include "utils/flags.h"
 #include "utils/math.h"
 #include "utils/mpmc_queue.h"
+#include "utils/object_pool.h"
+#include "utils/objects.h"
 #include "zrythm.h"
 
 #include <gtk/gtk.h>
@@ -52,6 +54,24 @@ add_recorded_id (
     &self->recorded_ids[self->num_recorded_ids],
     &region->id);
   self->num_recorded_ids++;
+}
+
+static void
+free_temp_selections (
+  RecordingManager * self)
+{
+  if (self->selections_before_start_track)
+    {
+      object_free_w_func_and_null (
+        arranger_selections_free,
+        self->selections_before_start_track);
+    }
+  if (self->selections_before_start_automation)
+    {
+      object_free_w_func_and_null (
+        arranger_selections_free,
+        self->selections_before_start_automation);
+    }
 }
 
 static void
@@ -81,6 +101,25 @@ on_stop_recording (
            id->type == REGION_TYPE_AUTOMATION))
         continue;
 
+      /* do some sanity checks for lane regions */
+      if (region_type_has_lane (id->type))
+        {
+          g_return_if_fail (
+            id->track_pos < TRACKLIST->num_tracks);
+          Track * track =
+            TRACKLIST->tracks[id->track_pos];
+          g_return_if_fail (track);
+
+          g_return_if_fail (
+            id->lane_pos < track->num_lanes);
+          TrackLane * lane =
+            track->lanes[id->lane_pos];
+          g_return_if_fail (lane);
+
+          g_return_if_fail (
+            id->idx <= lane->num_regions);
+        }
+
       /*region_identifier_print (id);*/
       ZRegion * region = region_find (id);
       g_return_if_fail (region);
@@ -103,6 +142,22 @@ on_stop_recording (
       (ArrangerSelections *) TL_SELECTIONS, true);
   undo_manager_perform (UNDO_MANAGER, action);
 
+  /* update frame caches and write audio clips to
+   * pool */
+  for (int i = 0; i < self->num_recorded_ids; i++)
+    {
+      ZRegion * r =
+        region_find (&self->recorded_ids[i]);
+      if (r->id.type == REGION_TYPE_AUDIO)
+        {
+          AudioClip * clip =
+            audio_region_get_clip (r);
+          audio_region_init_frame_caches (
+            r, clip);
+          audio_clip_write_to_pool (clip);
+        }
+    }
+
   /* restore the selections */
   arranger_selections_clear (
     (ArrangerSelections *) TL_SELECTIONS);
@@ -118,6 +173,9 @@ on_stop_recording (
       arranger_object_select (
         obj, F_SELECT, F_APPEND);
     }
+
+  /* free the temporary selections */
+  free_temp_selections (self);
 }
 
 /**
@@ -683,14 +741,37 @@ handle_midi_event (
         {
           mn_obj =
             (ArrangerObject *) mn;
-          arranger_object_end_pos_setter (
-            mn_obj,
+          Position local_end_pos;
+          position_set_to_pos (
+            &local_end_pos,
             &TRANSPORT->loop_end_pos);
+          position_add_ticks (
+            &local_end_pos,
+            - ((ArrangerObject *)
+            region_before_loop_end)->pos.
+              total_ticks);
+          arranger_object_end_pos_setter (
+            mn_obj, &local_end_pos);
         }
     }
 
   if (!ev->has_midi_event)
     return;
+
+  /* get local positions */
+  Position local_pos, local_end_pos;
+  position_set_to_pos (
+    &local_pos, &start_pos);
+  position_set_to_pos (
+    &local_end_pos, &end_pos);
+  position_add_ticks (
+    &local_pos,
+    - ((ArrangerObject *) region)->pos.
+      total_ticks);
+  position_add_ticks (
+    &local_end_pos,
+    - ((ArrangerObject *) region)->pos.
+      total_ticks);
 
   /* convert MIDI data to midi notes */
   MidiEvent * mev = &ev->midi_event;
@@ -699,7 +780,7 @@ handle_midi_event (
       case MIDI_EVENT_TYPE_NOTE_ON:
         g_return_if_fail (region);
         midi_region_start_unended_note (
-          region, &start_pos, &end_pos,
+          region, &local_pos, &local_end_pos,
           mev->note_pitch, mev->velocity, 1);
         break;
       case MIDI_EVENT_TYPE_NOTE_OFF:
@@ -712,7 +793,7 @@ handle_midi_event (
             mn_obj =
               (ArrangerObject *) mn;
             arranger_object_end_pos_setter (
-              mn_obj, &end_pos);
+              mn_obj, &local_end_pos);
           }
         break;
       default:
@@ -829,7 +910,7 @@ handle_automation_event (
   Track * tr = track_get_from_name (ev->track_name);
   AutomationTrack * at =
     automation_track_find_from_port_id (
-      &ev->port_id);
+      &ev->port_id, false);
   Port * port =
     automation_track_get_port (at);
   float value =
@@ -1074,8 +1155,9 @@ handle_automation_event (
 
 static void
 handle_start_recording (
-  RecordingEvent * ev,
-  bool             is_automation)
+  RecordingManager * self,
+  RecordingEvent *   ev,
+  bool               is_automation)
 {
   Track * tr = track_get_from_name (ev->track_name);
   gint64 cur_time = g_get_monotonic_time ();
@@ -1084,16 +1166,14 @@ handle_start_recording (
     {
       at =
         automation_track_find_from_port_id (
-          &ev->port_id);
-      RECORDING_MANAGER->
-        selections_before_start_automation =
+          &ev->port_id, false);
+      self->selections_before_start_automation =
           arranger_selections_clone (
             (ArrangerSelections *) TL_SELECTIONS);
     }
   else
     {
-      RECORDING_MANAGER->
-        selections_before_start_track =
+      self->selections_before_start_track =
           arranger_selections_clone (
             (ArrangerSelections *) TL_SELECTIONS);
     }
@@ -1201,16 +1281,10 @@ handle_start_recording (
  * This will loop indefinintely.
  */
 static int
-events_process (void * data)
+events_process (
+  RecordingManager * self)
 {
-  MPMCQueue * q = (MPMCQueue *) data;
-  RecordingManager * self = RECORDING_MANAGER;
   /*gint64 curr_time = g_get_monotonic_time ();*/
-  if (q != self->event_queue)
-    {
-      return G_SOURCE_REMOVE;
-    }
-
   /*g_message ("starting processing");*/
   RecordingEvent * ev;
   while (recording_event_queue_dequeue_event (
@@ -1257,7 +1331,7 @@ events_process (void * data)
           {
             AutomationTrack * at =
               automation_track_find_from_port_id (
-                &ev->port_id);
+                &ev->port_id, false);
             g_warn_if_fail (at);
             if (at->recording_started)
               {
@@ -1274,18 +1348,19 @@ events_process (void * data)
               self->num_recorded_ids = 0;
             }
           self->is_recording = 1;
-          handle_start_recording (ev, false);
+          handle_start_recording (self, ev, false);
           break;
         case RECORDING_EVENT_TYPE_START_AUTOMATION_RECORDING:
           g_message ("-------- START AUTOMATION RECORDING");
           {
             AutomationTrack * at =
               automation_track_find_from_port_id (
-                &ev->port_id);
+                &ev->port_id, false);
             g_warn_if_fail (at);
             if (!at->recording_started)
               {
-                handle_start_recording (ev, true);
+                handle_start_recording (
+                  self, ev, true);
               }
             at->recording_started = true;
           }
@@ -1305,12 +1380,6 @@ events_process (void * data)
   return G_SOURCE_CONTINUE;
 }
 
-static void *
-create_event_obj (void)
-{
-  return calloc (1, sizeof (RecordingEvent));
-}
-
 /**
  * Creates the event queue and starts the event loop.
  *
@@ -1320,32 +1389,45 @@ RecordingManager *
 recording_manager_new (void)
 {
   RecordingManager * self =
-    calloc (1, sizeof (RecordingManager));
+    object_new (RecordingManager);
 
-  ObjectPool * obj_pool;
-  MPMCQueue * queue;
-  if (self->event_queue &&
-      self->event_obj_pool)
-    {
-      obj_pool = self->event_obj_pool;
-      queue = self->event_queue;
-      self->event_obj_pool = NULL;
-      self->event_queue = NULL;
-      object_pool_free (obj_pool);
-      mpmc_queue_free (queue);
-    }
-
-  obj_pool =
+  self->event_obj_pool =
     object_pool_new (
-      create_event_obj, 200);
-  queue = mpmc_queue_new ();
+      (ObjectCreatorFunc) recording_event_new,
+      (ObjectFreeFunc) recording_event_free,
+      200);
+  self->event_queue = mpmc_queue_new ();
   mpmc_queue_reserve (
-    queue, (size_t) 200);
+    self->event_queue, (size_t) 200);
 
-  self->event_queue = queue;
-  self->event_obj_pool = obj_pool;
-
-  g_timeout_add (12, events_process, queue);
+  self->source_id =
+    g_timeout_add (
+      12, (GSourceFunc) events_process, self);
 
   return self;
+}
+
+void
+recording_manager_free (
+  RecordingManager * self)
+{
+  g_message ("%s: Freeing...", __func__);
+
+  /* stop source func */
+  g_source_remove_and_zero (self->source_id);
+
+  /* process pending events */
+  events_process (self);
+
+  /* free objects */
+  object_free_w_func_and_null (
+    mpmc_queue_free, self->event_queue);
+  object_free_w_func_and_null (
+    object_pool_free, self->event_obj_pool);
+
+  free_temp_selections (self);
+
+  object_zero_and_free (self);
+
+  g_message ("%s: done", __func__);
 }

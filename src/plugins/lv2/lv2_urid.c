@@ -22,6 +22,7 @@
 #include "plugins/plugin_manager.h"
 #include "zix/sem.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 LV2_URID
 lv2_urid_map_uri (

@@ -17,8 +17,12 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "zrythm-config.h"
+
 #include "gui/widgets/splash.h"
 #include "utils/resources.h"
+#include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -33,12 +37,12 @@ splash_tick_cb (
   GdkFrameClock *frame_clock,
   SplashWindowWidget * self)
 {
-  zix_sem_wait (&ZRYTHM->progress_status_lock);
+  zix_sem_wait (&zrythm_app->progress_status_lock);
   gtk_label_set_text (
-    self->label, ZRYTHM->status);
+    self->label, zrythm_app->status);
   gtk_progress_bar_set_fraction (
     self->progress_bar, ZRYTHM->progress);
-  zix_sem_post (&ZRYTHM->progress_status_lock);
+  zix_sem_post (&zrythm_app->progress_status_lock);
 
   return G_SOURCE_CONTINUE;
 }
@@ -56,10 +60,10 @@ static void
 finalize (
   SplashWindowWidget * self)
 {
-  if (ZRYTHM->init_thread)
+  if (zrythm_app->init_thread)
     {
-      g_thread_join (ZRYTHM->init_thread);
-      ZRYTHM->init_thread = NULL;
+      g_thread_join (zrythm_app->init_thread);
+      zrythm_app->init_thread = NULL;
     }
 
   G_OBJECT_CLASS (
@@ -75,7 +79,7 @@ splash_window_widget_new (
     g_object_new (
       SPLASH_WINDOW_WIDGET_TYPE,
       "application", G_APPLICATION (app),
-      "title", "Zrythm",
+      "title", PROGRAM_NAME,
       NULL);
   g_return_val_if_fail (
     Z_IS_SPLASH_WINDOW_WIDGET (self), NULL);

@@ -41,11 +41,12 @@
 #include "audio/marker_track.h"
 #include "audio/master_track.h"
 #include "audio/midi_region.h"
-#include "audio/mixer.h"
 #include "audio/scale_object.h"
 #include "audio/track.h"
 #include "audio/tracklist.h"
 #include "audio/transport.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/backend/automation_selections.h"
 #include "gui/widgets/arranger.h"
 #include "gui/widgets/automation_arranger.h"
@@ -80,6 +81,7 @@
 #include "utils/objects.h"
 #include "utils/ui.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
@@ -196,8 +198,31 @@ on_curve_algorithm_selected (
   GtkMenuItem *        menu_item,
   CurveAlgorithmInfo * info)
 {
+  g_return_if_fail (
+    AUTOMATION_SELECTIONS->num_automation_points ==
+      1 &&
+    AUTOMATION_SELECTIONS->automation_points[0] ==
+      info->ap);
+
+  /* clone the selections before the change */
+  ArrangerSelections * sel_before =
+    arranger_selections_clone (
+      (ArrangerSelections *) AUTOMATION_SELECTIONS);
+
+  /* change */
   info->ap->curve_opts.algo = info->algo;
+
+  /* create undoable action */
+  UndoableAction * ua =
+    arranger_selections_action_new_edit (
+      sel_before,
+      (ArrangerSelections *) AUTOMATION_SELECTIONS,
+      ARRANGER_SELECTIONS_ACTION_EDIT_PRIMITIVE,
+      true);
+  undo_manager_perform (UNDO_MANAGER, ua);
+
   free (info);
+  arranger_selections_free_full (sel_before);
 }
 
 /**

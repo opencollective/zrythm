@@ -19,9 +19,11 @@
 
 #include "audio/channel.h"
 #include "audio/chord_track.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/tracklist.h"
 #include "audio/track.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/arranger.h"
 #include "gui/widgets/bot_dock_edge.h"
 #include "gui/widgets/center_dock.h"
@@ -32,8 +34,10 @@
 #include "project.h"
 #include "utils/arrays.h"
 #include "utils/flags.h"
+#include "utils/object_utils.h"
 #include "utils/objects.h"
 #include "utils/string.h"
+#include "zrythm_app.h"
 
 /**
  * Initializes the tracklist when loading a project.
@@ -43,13 +47,9 @@ tracklist_init_loaded (
   Tracklist * self)
 {
   g_message ("initializing loaded Tracklist...");
-  int i;
-  Track * track;
-  /*Channel * chan;*/
-  /*AutomationTracklist * atl;*/
-  for (i = 0; i < self->num_tracks; i++)
+  for (int i = 0; i < self->num_tracks; i++)
     {
-      track = self->tracks[i];
+      Track * track = self->tracks[i];
 
       if (track->type == TRACK_TYPE_CHORD)
         self->chord_track = track;
@@ -57,8 +57,10 @@ tracklist_init_loaded (
         self->marker_track = track;
       else if (track->type == TRACK_TYPE_MASTER)
         self->master_track = track;
+      else if (track->type == TRACK_TYPE_TEMPO)
+        self->tempo_track = track;
 
-      track_init_loaded (track);
+      track_init_loaded (track, true);
     }
 }
 
@@ -178,6 +180,10 @@ tracklist_insert_track (
   int         publish_events,
   int         recalc_graph)
 {
+  g_message (
+    "inserting %s at %d...",
+    track->name, pos);
+
   track_set_name (track, track->name, 0);
 
   /* if adding at the end, append it, otherwise
@@ -203,16 +209,39 @@ tracklist_insert_track (
   /* move other tracks */
   for (int i = 0;
        i < self->num_tracks; i++)
-    track_set_pos (self->tracks[i], i);
+    {
+      if (i == pos)
+        continue;
+
+      track_set_pos (self->tracks[i], i);
+    }
+
+  track_set_is_project (track, true);
+
+  /* this is needed again since "set_is_project"
+   * made some ports from non-project to project
+   * and they weren't considered before */
+  track_set_pos (track, pos);
 
   if (track->channel)
-    channel_connect (track->channel);
+    {
+      channel_connect (track->channel);
+    }
+
+  /* verify */
+  track_verify_identifiers (track);
 
   if (recalc_graph)
-    mixer_recalc_graph (MIXER);
+    {
+      router_recalc_graph (ROUTER, F_NOT_SOFT);
+    }
 
   if (publish_events)
-    EVENTS_PUSH (ET_TRACK_ADDED, track);
+    {
+      EVENTS_PUSH (ET_TRACK_ADDED, track);
+    }
+
+  g_message ("%s: done", __func__);
 }
 
 ChordTrack *
@@ -515,12 +544,12 @@ tracklist_remove_track (
   Tracklist * self,
   Track *     track,
   bool        rm_pl,
-  bool        free,
+  bool        free_track,
   bool        publish_events,
   bool        recalc_graph)
 {
-  g_message ("removing %s",
-             track->name);
+  g_message (
+    "%s: removing %s...", __func__, track->name);
 
   Track * prev_visible =
     tracklist_get_prev_visible_track (
@@ -537,7 +566,8 @@ tracklist_remove_track (
       arranger_object_get_track (
         (ArrangerObject *) region) == track)
     {
-      clip_editor_set_region (CLIP_EDITOR, NULL);
+      clip_editor_set_region (
+        CLIP_EDITOR, NULL, publish_events);
     }
 
   /* remove/deselect all objects */
@@ -549,12 +579,8 @@ tracklist_remove_track (
   g_warn_if_fail (
     track->pos == idx);
 
-  if (track->channel)
-    {
-      channel_disconnect (
-        track->channel,
-        rm_pl, F_NO_RECALC_GRAPH);
-    }
+  track_disconnect (
+    track, rm_pl, F_NO_RECALC_GRAPH);
 
   tracklist_selections_remove_track (
     TRACKLIST_SELECTIONS, track, publish_events);
@@ -574,22 +600,55 @@ tracklist_remove_track (
 
   track_set_pos (track, -1);
 
+  track_set_is_project (track, false);
+
   /* move all other tracks */
   for (int i = 0; i < self->num_tracks; i++)
     {
       track_set_pos (self->tracks[i], i);
     }
 
-  if (free)
+  if (free_track)
     {
       free_later (track, track_free);
     }
 
   if (recalc_graph)
-    mixer_recalc_graph (MIXER);
+    {
+      router_recalc_graph (ROUTER, F_NOT_SOFT);
+    }
 
   if (publish_events)
-    EVENTS_PUSH (ET_TRACKS_REMOVED, NULL);
+    {
+      EVENTS_PUSH (ET_TRACKS_REMOVED, NULL);
+    }
+
+  g_message ("%s: done", __func__);
+}
+
+static void
+swap_tracks (
+  Tracklist * self,
+  int         src,
+  int         dest)
+{
+  Track * src_track = self->tracks[src];
+  Track * dest_track = self->tracks[dest];
+
+  /* move src somewhere temporarily */
+  self->tracks[src] = NULL;
+  self->tracks[self->num_tracks] = src_track;
+  track_set_pos (src_track, self->num_tracks);
+
+  /* move dest to src */
+  self->tracks[src] = dest_track;
+  self->tracks[dest] = NULL;
+  track_set_pos (dest_track, src);
+
+  /* move src from temp pos to dest */
+  self->tracks[dest] = src_track;
+  self->tracks[self->num_tracks] = NULL;
+  track_set_pos (src_track, dest);
 }
 
 /**
@@ -611,6 +670,7 @@ tracklist_move_track (
   g_message (
     "%s: %s from %d to %d",
     __func__, track->name, track->pos, pos);
+  /*int prev_pos = track->pos;*/
   bool move_higher = pos < track->pos;
 
   Track * prev_visible =
@@ -628,11 +688,12 @@ tracklist_move_track (
       arranger_object_get_track (
         (ArrangerObject *) region) == track)
     {
-      clip_editor_set_region (CLIP_EDITOR, NULL);
+      clip_editor_set_region (
+        CLIP_EDITOR, NULL, publish_events);
     }
 
-  /* remove/deselect all objects */
-  track_clear (track);
+  /* deselect all objects */
+  track_unselect_all (track);
 
   int idx =
     array_index_of (
@@ -657,48 +718,33 @@ tracklist_move_track (
   if (move_higher)
     {
       /* move all other tracks 1 track further */
-      for (int i = track->pos - 1; i >= pos; i--)
+      for (int i = track->pos; i > pos; i--)
         {
-          track_set_pos (self->tracks[i], i + 1);
+          swap_tracks (self, i, i - 1);
         }
     }
   else
     {
       /* move all other tracks 1 track earlier */
-      for (int i = track->pos + 1; i <= pos; i++)
+      for (int i = track->pos; i < pos; i++)
         {
-          track_set_pos (self->tracks[i], i - 1);
+          swap_tracks (self, i, i + 1);
         }
     }
-
-  array_delete (
-    self->tracks, self->num_tracks, track);
-
-  /* if adding at the end, append it, otherwise
-   * insert it */
-  if (pos == self->num_tracks)
-    {
-      array_append (
-        self->tracks, self->num_tracks, track);
-    }
-  else
-    {
-      array_insert (
-        self->tracks, self->num_tracks,
-        pos, track);
-    }
-
-  track_set_pos (track, pos);
 
   /* make the track the only selected track */
   tracklist_selections_select_single (
     TRACKLIST_SELECTIONS, track);
 
   if (recalc_graph)
-    mixer_recalc_graph (MIXER);
+    {
+      router_recalc_graph (ROUTER, F_NOT_SOFT);
+    }
 
   if (publish_events)
-    EVENTS_PUSH (ET_TRACKS_MOVED, NULL);
+    {
+      EVENTS_PUSH (ET_TRACKS_MOVED, NULL);
+    }
 
   g_message ("%s: finished moving track", __func__);
 }
@@ -735,7 +781,7 @@ tracklist_has_soloed (
     {
       track = self->tracks[i];
 
-      if (track->solo && track->channel)
+      if (track->channel && track_get_soloed (track))
         return 1;
     }
   return 0;
@@ -777,4 +823,65 @@ tracklist_get_num_visible_tracks (
     }
 
   return ret;
+}
+
+/**
+ * Exposes each track's ports that should be
+ * exposed to the backend.
+ *
+ * This should be called after setting up the
+ * engine.
+ */
+void
+tracklist_expose_ports_to_backend (
+  Tracklist * self)
+{
+  g_return_if_fail (self);
+
+  for (int i = 0; i < self->num_tracks; i++)
+    {
+      Track * track = self->tracks[i];
+      g_return_if_fail (track);
+
+      if (track_type_has_channel (track->type))
+        {
+          Channel * ch = track_get_channel (track);
+          channel_expose_ports_to_backend (ch);
+        }
+    }
+}
+
+Tracklist *
+tracklist_new (Project * project)
+{
+  Tracklist * self = object_new (Tracklist);
+
+  if (project)
+    {
+      project->tracklist = self;
+    }
+
+  return self;
+}
+
+void
+tracklist_free (
+  Tracklist * self)
+{
+  g_message ("%s: freeing...", __func__);
+
+  for (int i = self->num_tracks - 1; i >= 0; i--)
+    {
+      Track * track = self->tracks[i];
+      track_disconnect (
+        track, true, F_NO_RECALC_GRAPH);
+      track_set_pos (track, -1);
+
+      track_set_is_project (track, false);
+      track_free (track);
+    }
+
+  object_zero_and_free (self);
+
+  g_message ("%s: done", __func__);
 }

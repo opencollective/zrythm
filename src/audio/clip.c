@@ -22,11 +22,13 @@
 #include "audio/clip.h"
 #include "audio/encoder.h"
 #include "audio/engine.h"
+#include "audio/tempo_track.h"
 #include "project.h"
 #include "utils/audio.h"
 #include "utils/file.h"
 #include "utils/math.h"
 #include "utils/io.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
 
@@ -50,7 +52,8 @@ audio_clip_init_from_file (
     arr_size * sizeof (float));
   self->name = g_path_get_basename (full_path);
   self->channels = enc->nfo.channels;
-  self->bpm = TRANSPORT->bpm;
+  self->bpm =
+    tempo_track_get_current_bpm (P_TEMPO_TRACK);
   /*g_message (*/
     /*"\n\n num frames %ld \n\n", self->num_frames);*/
 
@@ -64,8 +67,12 @@ void
 audio_clip_init_loaded (
   AudioClip * self)
 {
+  g_debug (
+    "%s: %p", __func__, self);
+
   char * pool_dir =
-    project_get_pool_dir (PROJECT);
+    project_get_path (
+      PROJECT, PROJECT_PATH_POOL, false);
   char * noext =
     io_file_strip_ext (self->name);
   char * tmp =
@@ -74,7 +81,9 @@ audio_clip_init_loaded (
   char * filepath =
     g_strdup_printf ("%s.wav", tmp);
 
+  bpm_t bpm = self->bpm;
   audio_clip_init_from_file (self, filepath);
+  self->bpm  = bpm;
 }
 
 /**
@@ -92,7 +101,8 @@ audio_clip_new_from_file (
   audio_clip_init_from_file (self, full_path);
 
   self->pool_id = -1;
-  self->bpm = TRANSPORT->bpm;
+  self->bpm =
+    tempo_track_get_current_bpm (P_TEMPO_TRACK);
 
   return self;
 }
@@ -126,7 +136,8 @@ audio_clip_new_from_float_array (
     {
       self->frames[i] = (sample_t) arr[i];
     }
-  self->bpm = TRANSPORT->bpm;
+  self->bpm =
+    tempo_track_get_current_bpm (P_TEMPO_TRACK);
 
   return self;
 }
@@ -158,7 +169,8 @@ audio_clip_new_recording (
   self->num_frames = nframes;
   self->name = g_strdup (name);
   self->pool_id = -1;
-  self->bpm = TRANSPORT->bpm;
+  self->bpm =
+    tempo_track_get_current_bpm (P_TEMPO_TRACK);
   for (long i = 0; i < nframes * (long) channels;
        i++)
     {
@@ -178,8 +190,8 @@ audio_clip_write_to_pool (
   /* generate a copy of the given filename in the
    * project dir */
   char * prj_pool_dir =
-    project_get_pool_dir (
-      PROJECT);
+    project_get_path (
+      PROJECT, PROJECT_PATH_POOL, false);
   g_warn_if_fail (
     file_exists (prj_pool_dir));
   char * without_ext =

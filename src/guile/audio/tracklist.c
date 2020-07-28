@@ -22,6 +22,7 @@
 #ifndef SNARF_MODE
 #include "audio/tracklist.h"
 #include "project.h"
+#include "zrythm_app.h"
 #endif
 
 SCM_DEFINE (
@@ -67,7 +68,7 @@ SCM_DEFINE (
     scm_from_pointer (TRACKLIST, NULL);
 }
 
-void
+static void
 init_module (void * data)
 {
 #ifndef SNARF_MODE

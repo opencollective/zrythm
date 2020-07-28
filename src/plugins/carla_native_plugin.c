@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_CARLA
 
@@ -25,18 +25,29 @@
 
 #include "audio/engine.h"
 #include "audio/midi.h"
+#include "audio/tempo_track.h"
 #include "audio/transport.h"
+#include "gui/backend/event.h"
+#include "gui/backend/event_manager.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
+#include "plugins/plugin_manager.h"
+#include "plugins/carla/carla_discovery.h"
 #include "plugins/carla_native_plugin.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/gtk.h"
 #include "utils/file.h"
+#include "utils/flags.h"
 #include "utils/io.h"
 #include "utils/string.h"
 #include "zrythm.h"
+#include "zrythm_app.h"
 
 #include <gtk/gtk.h>
+#ifdef HAVE_X11
+#include <gtk/gtkx.h>
+#endif
 #include <glib/gi18n.h>
 
 #include <CarlaHost.h>
@@ -48,12 +59,8 @@ carla_native_plugin_init_loaded (
   carla_native_plugin_new_from_descriptor (
     self->plugin);
 
-  char * state_dir =
-    io_path_get_parent_dir (
-      self->state_file);
   carla_native_plugin_load_state (
-    self->plugin->carla, state_dir);
-  g_free (state_dir);
+    self->plugin->carla, NULL);
 
   carla_native_plugin_free (self);
 }
@@ -193,9 +200,65 @@ host_dispatcher (
 {
   /* TODO */
   g_message ("host dispatcher");
+  switch (opcode)
+    {
+    case NATIVE_HOST_OPCODE_HOST_IDLE:
+      /* some expensive computation is happening.
+       * this is used so that the GTK ui does not
+       * block */
+      /* note: disabled because some logic depends
+       * on this plugin being activated */
+#if 0
+      while (gtk_events_pending ())
+        {
+          gtk_main_iteration ();
+        }
+#endif
+      break;
+    default:
+      break;
+    }
 
   return 0;
 }
+
+static void
+engine_callback (
+  void *               ptr,
+  EngineCallbackOpcode action,
+  uint                 plugin_id,
+  int                  val1,
+  int                  val2,
+  int                  val3,
+  float                valf,
+  const char *         val_str)
+{
+  CarlaNativePlugin * self =
+    (CarlaNativePlugin *) ptr;
+
+  switch (action)
+    {
+    case ENGINE_CALLBACK_UI_STATE_CHANGED:
+      switch (val1)
+        {
+        case 0:
+        case -1:
+          self->plugin->visible = false;
+          self->plugin->visible = false;
+          break;
+        case 1:
+          self->plugin->visible = true;
+          break;
+        }
+      EVENTS_PUSH (
+        ET_PLUGIN_VISIBILITY_CHANGED,
+        self->plugin);
+      break;
+    default:
+      break;
+    }
+}
+
 
 static CarlaNativePlugin *
 _create ()
@@ -206,10 +269,8 @@ _create ()
   self->native_host_descriptor.handle = self;
   self->native_host_descriptor.uiName =
     g_strdup ("Zrythm");
+
   self->native_host_descriptor.uiParentId = 0;
-    /*(uintptr_t)*/
-    /*z_gtk_widget_get_gdk_window_id (*/
-      /*GTK_WIDGET (MAIN_WINDOW));*/
 
   /* set resources dir */
   const char * carla_filename =
@@ -235,14 +296,18 @@ _create ()
     host_get_time_info;
   self->native_host_descriptor.write_midi_event =
     host_write_midi_event;
-  self->native_host_descriptor.ui_parameter_changed =
-    host_ui_parameter_changed;
-  self->native_host_descriptor.ui_custom_data_changed =
-    host_ui_custom_data_changed;
+  self->native_host_descriptor.
+    ui_parameter_changed =
+      host_ui_parameter_changed;
+  self->native_host_descriptor.
+    ui_custom_data_changed =
+      host_ui_custom_data_changed;
   self->native_host_descriptor.ui_closed =
     host_ui_closed;
-  self->native_host_descriptor.ui_open_file = NULL;
-  self->native_host_descriptor.ui_save_file = NULL;
+  self->native_host_descriptor.ui_open_file =
+    NULL;
+  self->native_host_descriptor.ui_save_file =
+    NULL;
   self->native_host_descriptor.dispatcher = host_dispatcher;
 
   self->time_info.bbt.valid = 1;
@@ -281,64 +346,43 @@ create_plugin (
     ENGINE_OPTION_PLUGIN_PATH, PLUGIN_LV2,
     PLUGIN_MANAGER->lv2_path);
 
-  if (descr->protocol == PROT_LV2)
+  /* if no bridge mode specified, calculate the
+   * bridge mode here */
+  CarlaBridgeMode bridge_mode = descr->bridge_mode;
+  if (bridge_mode == CARLA_BRIDGE_NONE)
     {
-      /* set bridging on if needed */
-      /* TODO if the UI and DSP binary is the same
-       * file, bridge the whole plugin */
-      /* TODO bridge anything other than X11 */
-      LilvNode * lv2_uri =
-        lilv_new_uri (LILV_WORLD, descr->uri);
-      const LilvPlugin * lilv_plugin =
-        lilv_plugins_get_by_uri (
-          PM_LILV_NODES.lilv_plugins,
-          lv2_uri);
-      lilv_node_free (lv2_uri);
-      LilvUIs * uis =
-        lilv_plugin_get_uis (lilv_plugin);
-      const LilvUI * picked_ui;
-      bool needs_bridging =
-        lv2_plugin_pick_ui (
-          uis, LV2_PLUGIN_UI_FOR_BRIDGING,
-          &picked_ui, NULL);
-      if (needs_bridging)
-        {
-          const LilvNode * ui_uri =
-            lilv_ui_get_uri (picked_ui);
-          LilvNodes * ui_required_features =
-            lilv_world_find_nodes (
-              LILV_WORLD, ui_uri,
-              PM_LILV_NODES.core_requiredFeature,
-              NULL);
-          if (lilv_nodes_contains (
-                ui_required_features,
-                PM_LILV_NODES.data_access) ||
-              lilv_nodes_contains (
-                ui_required_features,
-                PM_LILV_NODES.instance_access)
-              )
-            {
-              /* if the DSP and the UI are separate, only
-               * bridge UI, otherwise bridge both */
-              g_message (
-                "plugin requires instance/data "
-                "access, using plugin bridge");
-              carla_set_engine_option (
-                self->host_handle,
-                ENGINE_OPTION_PREFER_PLUGIN_BRIDGES,
-                true, NULL);
-            }
-          else
-            {
-              g_message ("using UI bridge only");
-              carla_set_engine_option (
-                self->host_handle,
-                ENGINE_OPTION_PREFER_UI_BRIDGES, true,
-                NULL);
-            }
-          lilv_nodes_free (ui_required_features);
-        }
-      lilv_uis_free (uis);
+      g_message (
+        "%s: recalculating bridge mode...",
+        __func__);
+      bridge_mode =
+        z_carla_discovery_get_bridge_mode (descr);
+    }
+
+  g_message (
+    "%s: using bridge mode %s", __func__,
+    carla_bridge_mode_strings[bridge_mode].str);
+
+  /* set bridging on if needed */
+  switch (bridge_mode)
+    {
+    case CARLA_BRIDGE_FULL:
+      g_message (
+        "plugin must be bridged whole, "
+        "using plugin bridge");
+      carla_set_engine_option (
+        self->host_handle,
+        ENGINE_OPTION_PREFER_PLUGIN_BRIDGES,
+        true, NULL);
+      break;
+    case CARLA_BRIDGE_UI:
+      g_message ("using UI bridge only");
+      carla_set_engine_option (
+        self->host_handle,
+        ENGINE_OPTION_PREFER_UI_BRIDGES,
+        true, NULL);
+      break;
+    default:
+      break;
     }
 
   int ret = 0;
@@ -400,6 +444,10 @@ create_plugin (
   ENABLE_OPTION (SEND_PITCHBEND);
   ENABLE_OPTION (SEND_ALL_SOUND_OFF);
   ENABLE_OPTION (SEND_PROGRAM_CHANGES);
+
+  /* add engine callback */
+  carla_set_engine_callback (
+    self->host_handle, engine_callback, self);
 
   return self;
 }
@@ -484,7 +532,7 @@ carla_native_plugin_proces (
   self->time_info.bbt.ticksPerBeat =
     TRANSPORT->ticks_per_beat;
   self->time_info.bbt.beatsPerMinute =
-    TRANSPORT->bpm;
+    tempo_track_get_current_bpm (P_TEMPO_TRACK);
 
   PluginDescriptor * descr =
     self->plugin->descr;
@@ -828,6 +876,7 @@ carla_native_plugin_new_from_descriptor (
 {
   CarlaNativePlugin * self =
     create_from_descr (plugin->descr);
+  g_return_if_fail (self);
 
   plugin->carla = self;
   self->plugin = plugin;
@@ -929,6 +978,8 @@ create_ports (
             self->plugin, port);
         }
     }
+
+  self->ports_created = true;
 }
 
 /**
@@ -949,18 +1000,22 @@ carla_native_plugin_instantiate (
     self->native_plugin_descriptor->ui_show,
     -1);
 
-  /* create or load ports */
-  if (!loading)
-    create_ports (self, loading);
+  /* create ports */
+  if (!loading && !self->ports_created)
+    {
+      create_ports (self, false);
+    }
 
   g_message ("activating carla plugin...");
   self->native_plugin_descriptor->activate (
     self->native_plugin_handle);
   g_message ("carla plugin activated");
 
-  /* create or load ports */
+  /* load ports */
   if (loading)
-    create_ports (self, loading);
+    {
+      create_ports (self, true);
+    }
 
   return 0;
 }
@@ -980,6 +1035,32 @@ carla_native_plugin_open_ui (
     case PROT_LV2:
     case PROT_AU:
       {
+        char * title =
+          plugin_generate_window_title (
+            self->plugin);
+        carla_set_custom_ui_title (
+          self->host_handle, 0, title);
+        g_free (title);
+
+        /* set whether to keep window on top */
+        if (ZRYTHM_HAVE_UI &&
+            g_settings_get_boolean (
+              S_P_PLUGINS_UIS, "stay-on-top"))
+          {
+#ifdef HAVE_X11
+            char xid[400];
+            sprintf (
+              xid, "%lx",
+              gdk_x11_window_get_xid (
+                gtk_widget_get_window (
+                  GTK_WIDGET (MAIN_WINDOW))));
+            carla_set_engine_option (
+              self->host_handle,
+              ENGINE_OPTION_FRONTEND_WIN_ID, 0,
+              xid);
+#endif
+          }
+
         carla_show_custom_ui (
           self->host_handle, 0, show);
         self->plugin->visible = show;
@@ -994,9 +1075,12 @@ carla_native_plugin_open_ui (
               self, NULL);
           }
 
-          EVENTS_PUSH (
-            ET_PLUGIN_WINDOW_VISIBILITY_CHANGED,
-            self->plugin);
+        if (!ZRYTHM_TESTING)
+          {
+            EVENTS_PUSH (
+              ET_PLUGIN_WINDOW_VISIBILITY_CHANGED,
+              self->plugin);
+          }
       }
       break;
     default:
@@ -1004,13 +1088,15 @@ carla_native_plugin_open_ui (
     }
 }
 
-void
+int
 carla_native_plugin_activate (
   CarlaNativePlugin * self,
   bool                activate)
 {
   carla_set_active (
     self->host_handle, 0, activate);
+
+  return 0;
 }
 
 float
@@ -1087,65 +1173,108 @@ carla_native_plugin_get_port_from_param_id (
   g_return_val_if_reached (NULL);
 }
 
+
 /**
  * Saves the state inside the given directory.
  */
 int
 carla_native_plugin_save_state (
   CarlaNativePlugin * self,
-  char *              dir)
+  bool                is_backup)
 {
-  if (self->state_file)
-    {
-      g_free (self->state_file);
-    }
-  io_mkdir (dir);
-  self->state_file =
+  char * abs_state_dir =
+    plugin_get_abs_state_dir (
+      self->plugin, is_backup);
+  io_mkdir (abs_state_dir);
+  char * state_file_abs_path =
     g_build_filename (
-      dir, CARLA_STATE_FILENAME, NULL);
-  int ret =
-    carla_save_plugin_state (
-      self->host_handle, 0, self->state_file);
-  g_warn_if_fail (file_exists (self->state_file));
-  return !ret;
+      abs_state_dir, CARLA_STATE_FILENAME, NULL);
+  char * state =
+    self->native_plugin_descriptor->get_state (
+      self->native_plugin_handle);
+  GError * err = NULL;
+  g_file_set_contents (
+    state_file_abs_path, state, -1, &err);
+  g_free (abs_state_dir);
+  g_free (state_file_abs_path);
+  g_free (state);
+  if (err)
+    {
+      g_critical (
+        "An error occurred saving the state: %s",
+        err->message);
+      return -1;
+    }
+
+  g_warn_if_fail (self->plugin->state_dir);
+
+  return 0;
+}
+
+char *
+carla_native_plugin_get_abs_state_file_path (
+  CarlaNativePlugin * self,
+  bool                is_backup)
+{
+  char * abs_state_dir =
+    plugin_get_abs_state_dir (
+      self->plugin, is_backup);
+  char * state_file_abs_path =
+    g_build_filename (
+      abs_state_dir, CARLA_STATE_FILENAME, NULL);
+
+  g_free (abs_state_dir);
+
+  return state_file_abs_path;
 }
 
 /**
- * Loads the state from the given directory or from
+ * Loads the state from the given file or from
  * its state file.
- *
- * @param dir The directory to save the state from,
- *   or NULL to use
- *   \ref CarlaNativePlugin.state_file.
  */
 void
 carla_native_plugin_load_state (
   CarlaNativePlugin * self,
-  char *              dir)
+  char *              abs_path)
 {
   char * state_file;
-  if (dir)
+  if (abs_path)
     {
-      state_file =
-        g_build_filename (
-          dir, CARLA_STATE_FILENAME, NULL);
+      state_file = g_strdup (abs_path);
     }
   else
     {
-      state_file = self->state_file;
+      char * state_dir_abs_path =
+        plugin_get_abs_state_dir (
+          self->plugin,
+          PROJECT->loading_from_backup);
+      state_file =
+        g_build_filename (
+          state_dir_abs_path, CARLA_STATE_FILENAME,
+          NULL);
+      g_free (state_dir_abs_path);
     }
 
   g_warn_if_fail (file_exists (state_file));
-  carla_load_plugin_state (
-    self->host_handle, 0, state_file);
-  g_message (
-    "loading carla plugin state from %s",
-    state_file);
-
-  if (dir)
+  char * state = NULL;
+  GError * err = NULL;
+  g_file_get_contents (
+    state_file, &state, NULL, &err);
+  if (err)
     {
-      g_free (state_file);
+      g_warning (
+        "An error occurred reading the state: %s",
+        err->message);
+      return;
     }
+  self->native_plugin_descriptor->set_state (
+    self->native_plugin_handle, state);
+  g_message (
+    "%s: loading carla plugin state from %s",
+    __func__, state_file);
+
+  g_free (state);
+  g_free (state_file);
 }
 
 void

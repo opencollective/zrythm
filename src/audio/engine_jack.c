@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2019 Alexandros Theodotou <alex at zrythm dot org>
+ * Copyright (C) 2018-2020 Alexandros Theodotou <alex at zrythm dot org>
  *
  * This file is part of Zrythm
  *
@@ -17,7 +17,7 @@
  * along with Zrythm.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "config.h"
+#include "zrythm-config.h"
 
 #ifdef HAVE_JACK
 
@@ -26,21 +26,21 @@
 #include "audio/engine_jack.h"
 #include "audio/ext_port.h"
 #include "audio/midi.h"
-#include "audio/mixer.h"
+#include "audio/router.h"
 #include "audio/port.h"
-#include "audio/routing.h"
+#include "audio/tempo_track.h"
 #include "audio/transport.h"
 #include "gui/widgets/main_window.h"
 #include "plugins/plugin.h"
 #include "plugins/lv2_plugin.h"
 #include "project.h"
+#include "settings/settings.h"
 #include "utils/ui.h"
 
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
 
-#include <jack/metadata.h>
-#include <jack/statistics.h>
+#include <jack/thread.h>
 
 /**
  * Adds a port to the array if it doesn't already
@@ -213,11 +213,14 @@ sample_rate_cb (
 {
   AUDIO_ENGINE->sample_rate = nframes;
 
-  engine_update_frames_per_tick (
-    self,
-    TRANSPORT->beats_per_bar,
-    TRANSPORT->bpm,
-    AUDIO_ENGINE->sample_rate);
+  if (P_TEMPO_TRACK)
+    {
+      engine_update_frames_per_tick (
+        self,
+        TRANSPORT->beats_per_bar,
+        tempo_track_get_current_bpm (P_TEMPO_TRACK),
+        AUDIO_ENGINE->sample_rate);
+    }
 
   g_message (
     "JACK: Sample rate changed to %d", nframes);
@@ -286,9 +289,11 @@ engine_jack_prepare_process (
         {
           TRANSPORT->beats_per_bar =
             (int) pos.beats_per_bar;
-          transport_set_bpm (
-            TRANSPORT,
-            (float) pos.beats_per_minute);
+          tempo_track_set_bpm (
+            P_TEMPO_TRACK,
+            (float) pos.beats_per_minute,
+            (float) pos.beats_per_minute,
+            true, true);
           transport_set_beat_unit (
             TRANSPORT, (int) pos.beat_type);
         }
@@ -328,7 +333,8 @@ xrun_cb (
   if (cur_time - self->last_xrun_notification >
         6000000)
     {
-      ui_show_notification_idle (
+      /* FIXME make a notification message queue */
+      g_warning (
         _("XRUN occurred - check your JACK "
         "configuration"));
       self->last_xrun_notification = cur_time;
@@ -345,7 +351,9 @@ timebase_cb (
   int new_pos,
   void *arg)
 {
-  /*AudioEngine * self = (AudioEngine *) arg;*/
+  AudioEngine * self = (AudioEngine *) arg;
+  if (!self->run)
+    return;
 
   /* Mandatory fields */
   pos->valid = JackPositionBBT;
@@ -371,7 +379,8 @@ timebase_cb (
   pos->ticks_per_beat =
     TRANSPORT->ticks_per_beat;
   pos->beats_per_minute =
-    (double) TRANSPORT->bpm;
+    (double)
+    tempo_track_get_current_bpm (P_TEMPO_TRACK);
 }
 
 /**
@@ -390,8 +399,7 @@ shutdown_cb (void *arg)
  */
 int
 engine_jack_midi_setup (
-  AudioEngine * self,
-  int           loading)
+  AudioEngine * self)
 {
   /* TODO: case 1 - no jack client (using another
    * backend)
@@ -406,61 +414,6 @@ engine_jack_midi_setup (
     jack_port_type_get_buffer_size (
       self->client, JACK_DEFAULT_MIDI_TYPE);
 #endif
-
-  /*if (loading)*/
-    /*{*/
-      /*self->midi_in->data =*/
-        /*(void *) jack_port_register (*/
-          /*self->client, "MIDI_in",*/
-          /*JACK_DEFAULT_MIDI_TYPE,*/
-          /*JackPortIsInput, 0);*/
-      /*self->midi_out->data =*/
-        /*(void *) jack_port_register (*/
-          /*self->client, "MIDI_out",*/
-          /*JACK_DEFAULT_MIDI_TYPE,*/
-          /*JackPortIsOutput, 0);*/
-    /*}*/
-  /*else*/
-    /*{*/
-      /*self->midi_in =*/
-        /*port_new_with_data (*/
-          /*INTERNAL_JACK_PORT,*/
-          /*TYPE_EVENT,*/
-          /*FLOW_INPUT,*/
-          /*"JACK MIDI In",*/
-          /*(void *) jack_port_register (*/
-            /*self->client, "MIDI_in",*/
-            /*JACK_DEFAULT_MIDI_TYPE,*/
-            /*JackPortIsInput, 0));*/
-      /*self->midi_in->identifier.owner_type =*/
-        /*PORT_OWNER_TYPE_BACKEND;*/
-      /*self->midi_out =*/
-        /*port_new_with_data (*/
-          /*INTERNAL_JACK_PORT,*/
-          /*TYPE_EVENT,*/
-          /*FLOW_OUTPUT,*/
-          /*"JACK MIDI Out",*/
-          /*(void *) jack_port_register (*/
-            /*self->client, "MIDI_out",*/
-            /*JACK_DEFAULT_MIDI_TYPE,*/
-            /*JackPortIsOutput, 0));*/
-      /*self->midi_out->identifier.owner_type =*/
-        /*PORT_OWNER_TYPE_BACKEND;*/
-    /*}*/
-
-  /* init queue */
-  /*self->midi_in->midi_events =*/
-    /*midi_events_new (*/
-      /*self->midi_in);*/
-  /*self->midi_out->midi_events =*/
-    /*midi_events_new (*/
-      /*self->midi_out);*/
-
-  /*if (!self->midi_in->data ||*/
-      /*!self->midi_out->data)*/
-    /*{*/
-      /*g_warning ("no more JACK ports available");*/
-    /*}*/
 
   return 0;
 }
@@ -507,7 +460,7 @@ int
 engine_jack_test (
   GtkWindow * win)
 {
-  const char *client_name = "Zrythm";
+  const char *client_name = PROGRAM_NAME;
   const char *server_name = NULL;
   jack_options_t options = JackNoStartServer;
   jack_status_t status;
@@ -541,22 +494,20 @@ engine_jack_test (
  * Sets up the audio engine to use jack.
  */
 int
-engine_jack_setup (AudioEngine * self,
-            int           loading)
+engine_jack_setup (
+  AudioEngine * self)
 {
   g_message ("Setting up JACK...");
 
-  const char *client_name = "Zrythm";
+  const char *client_name = PROGRAM_NAME;
   const char *server_name = NULL;
   jack_options_t options = JackNoStartServer;
   jack_status_t status;
 
-  // open a client connection to the JACK server
+  /* open a client connection to the JACK server */
   self->client =
-    jack_client_open (client_name,
-                      options,
-                      &status,
-                      server_name);
+    jack_client_open (
+      client_name, options, &status, server_name);
 
   if (!self->client)
     {
@@ -598,52 +549,6 @@ engine_jack_setup (AudioEngine * self,
 #ifdef JALV_JACK_SESSION
   /*jack_set_session_callback(client, &jack_session_cb, arg);*/
 #endif
-
-  /* create ports */
-  Port * monitor_out_l, * monitor_out_r;
-
-  const char * monitor_out_l_str =
-    "Monitor out L";
-  const char * monitor_out_r_str =
-    "Monitor out R";
-
-  if (loading)
-    {
-    }
-  else
-    {
-      monitor_out_l = port_new_with_type (
-        TYPE_AUDIO,
-        FLOW_OUTPUT,
-        monitor_out_l_str);
-      monitor_out_r = port_new_with_type (
-        TYPE_AUDIO,
-        FLOW_OUTPUT,
-        monitor_out_r_str);
-
-      monitor_out_l->id.owner_type =
-        PORT_OWNER_TYPE_BACKEND;
-      monitor_out_r->id.owner_type =
-        PORT_OWNER_TYPE_BACKEND;
-
-      self->monitor_out =
-        stereo_ports_new_from_existing (
-          monitor_out_l, monitor_out_r);
-
-      /* expose to jack */
-      port_set_expose_to_backend (
-        self->monitor_out->l, 1);
-      port_set_expose_to_backend (
-        self->monitor_out->r, 1);
-
-      if (!self->monitor_out->l->data ||
-          !self->monitor_out->r->data)
-        {
-          g_error (
-            "Failed to exponse monitor out ports to "
-            "JACK");
-        }
-    }
 
   /*engine_jack_rescan_ports (self);*/
 
@@ -746,6 +651,7 @@ engine_jack_tear_down (
   AudioEngine * self)
 {
   jack_client_close (self->client);
+  self->client = NULL;
 
   /* init semaphore */
   zix_sem_init (
@@ -782,78 +688,86 @@ engine_jack_fill_out_bufs (
 
 int
 engine_jack_activate (
-  AudioEngine * self)
+  AudioEngine * self,
+  bool          activate)
 {
-  /* Tell the JACK server that we are ready to roll.  Our
-   * process() callback will start running now. */
-  if (jack_activate (self->client))
+  if (activate)
     {
-      g_warning ("cannot activate client");
-      return -1;
+      /* Tell the JACK server that we are ready to roll.  Our
+       * process() callback will start running now. */
+      if (jack_activate (self->client))
+        {
+          g_warning ("cannot activate client");
+          return -1;
+        }
+      g_message ("Jack activated");
+
+      /* Connect the ports.  You can't do this before
+       * the client is
+       * activated, because we can't make connections
+       * to clients
+       * that aren't running.  Note the confusing (but
+       * necessary)
+       * orientation of the driver backend ports:
+       * playback ports are
+       * "input" to the backend, and capture ports are
+       * "output" from
+       * it.
+       */
+
+      /* FIXME this just connects to the first ports
+       * it finds. add a menu in the welcome screen to
+       * set up default output */
+      const char **ports =
+        jack_get_ports (
+          self->client, NULL, JACK_DEFAULT_AUDIO_TYPE,
+          JackPortIsPhysical|JackPortIsInput);
+      if (ports == NULL ||
+          ports[0] == NULL ||
+          ports[1] == NULL)
+        {
+          g_critical (
+            "no physical playback ports found");
+          return -1;
+        }
+
+      g_return_val_if_fail (
+        self->monitor_out->l->data &&
+          self->monitor_out->r->data,
+        -1);
+
+      g_message ("connecting to system out ports...");
+      if (jack_connect (
+            self->client,
+            jack_port_name (
+              JACK_PORT_T (
+                self->monitor_out->l->data)),
+            ports[0]))
+        {
+          g_critical ("cannot connect output ports");
+          return -1;
+        }
+
+      if (jack_connect (
+            self->client,
+            jack_port_name (
+              JACK_PORT_T (self->monitor_out->r->data)),
+            ports[1]))
+        {
+          g_critical ("cannot connect output ports");
+          return -1;
+        }
+
+      /* autoconnect MIDI controllers */
+      autoconnect_midi_controllers (
+        AUDIO_ENGINE);
+
+      jack_free (ports);
     }
-  g_message ("Jack activated");
-
-  /* Connect the ports.  You can't do this before
-   * the client is
-   * activated, because we can't make connections
-   * to clients
-   * that aren't running.  Note the confusing (but
-   * necessary)
-   * orientation of the driver backend ports:
-   * playback ports are
-   * "input" to the backend, and capture ports are
-   * "output" from
-   * it.
-   */
-
-  /* FIXME this just connects to the first ports
-   * it finds. add a menu in the welcome screen to
-   * set up default output */
-  const char **ports =
-    jack_get_ports (
-      self->client, NULL, JACK_DEFAULT_AUDIO_TYPE,
-      JackPortIsPhysical|JackPortIsInput);
-  if (ports == NULL ||
-      ports[0] == NULL ||
-      ports[1] == NULL)
+  else
     {
-      g_critical (
-        "no physical playback ports found");
-      return -1;
+      jack_deactivate (self->client);
     }
-
-  g_return_val_if_fail (
-    self->monitor_out->l->data &&
-      self->monitor_out->r->data,
-    -1);
-
-  g_message ("connecting to system out ports...");
-  if (jack_connect (
-        self->client,
-        jack_port_name (
-          JACK_PORT_T (
-            self->monitor_out->l->data)),
-        ports[0]))
-    {
-      g_critical ("cannot connect output ports");
-      return -1;
-    }
-
-  if (jack_connect (
-        self->client,
-        jack_port_name (
-          JACK_PORT_T (self->monitor_out->r->data)),
-        ports[1]))
-    {
-      g_critical ("cannot connect output ports");
-      return -1;
-    }
-
-  /* autoconnect MIDI controllers */
-  autoconnect_midi_controllers (
-    AUDIO_ENGINE);
-
-  jack_free (ports);
 
   return 0;
 }
